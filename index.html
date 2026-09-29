@@ -518,6 +518,24 @@
     render();
   }
 
+  // Renders the shop logo, falling back to the plain "B" badge if the image
+  // isn't found (e.g. previewing this page somewhere without img/ alongside it).
+  function renderMark(size){
+    return '<img src="img/SafariCafe-logo.png" alt="Safari Cafe" data-size="'+size+'" ' +
+      'style="width:'+size+'px;height:'+size+'px;object-fit:contain;border-radius:'+Math.round(size*0.28)+'px;flex:none;" ' +
+      'onerror="handleLogoError(this)">';
+  }
+  window.handleLogoError = function(img){
+    var size = parseInt(img.getAttribute('data-size'), 10) || 30;
+    var div = document.createElement('div');
+    div.className = 'mark';
+    div.style.width = size + 'px';
+    div.style.height = size + 'px';
+    div.style.fontSize = Math.round(size * 0.42) + 'px';
+    div.textContent = 'B';
+    img.replaceWith(div);
+  };
+
   function svgIcon(name, color){
     var stroke = color || "currentColor";
     var icons = {
@@ -567,7 +585,7 @@
   function renderTopbar(){
     return '' +
     '<div class="topbar">' +
-      '<div class="brand"><div class="mark">B</div><div class="name">Floor Log</div></div>' +
+      '<div class="brand">'+renderMark(30)+'<div class="name">Floor Log</div></div>' +
       '<div class="who">' +
         '<span class="dot"></span>' +
         '<span>'+escapeHtml(state.employee.name)+(state.employee.isAdmin ? ' - Boss' : '')+'</span>' +
@@ -800,7 +818,7 @@
 
   function renderLoading(){
     return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text-dim);font-size:13.5px;">' +
-      '<div class="mark" style="width:44px;height:44px;border-radius:13px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Oswald;font-weight:700;font-size:20px;">B</div>' +
+      renderMark(44) +
       '<div>Loading...</div>' +
     '</div>';
   }
@@ -848,7 +866,7 @@
     return '' +
     '<div id="screen-login">' +
       '<div class="login-hero">' +
-        '<div class="mark">B</div>' +
+        renderMark(56) +
         '<h1>Biltong Floor Log</h1>' +
         '<p>Enter your '+PIN_LENGTH+'-character code to clock on</p>' +
       '</div>' +
