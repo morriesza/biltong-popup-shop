@@ -1,4 +1,3 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <title>Biltong Floor Log</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -159,11 +158,11 @@
   .pin-dot.filled{ background:var(--accent); border-color:var(--accent); }
   .pin-dot.err{ background:var(--bad); border-color:var(--bad); }
   .keypad{
-    display:grid; grid-template-columns:repeat(3,1fr); gap:10px; max-width:280px; margin-inline:auto; width:100%;
+    display:grid; grid-template-columns:repeat(4,1fr); gap:9px; max-width:320px; margin-inline:auto; width:100%;
   }
   .key{
-    aspect-ratio:1; border-radius:16px; border:1px solid var(--border); background:var(--surface);
-    font-family:'Oswald',sans-serif; font-size:22px; font-weight:600; color:var(--text);
+    aspect-ratio:1; border-radius:14px; border:1px solid var(--border); background:var(--surface);
+    font-family:'Oswald',sans-serif; font-size:19px; font-weight:600; color:var(--text);
     display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:var(--shadow);
   }
   .key:active{ background:var(--surface-2); }
@@ -287,6 +286,9 @@
      on each device, or bake it into the file once the shop shares it.
   ========================================================================= */
 
+  var PIN_LENGTH = 6;
+  var PIN_PATTERN = /^[0-9ABC]{6}$/;
+
   var LS_CONFIG = "biltong_firebase_config";
   var LS_DEMO = "biltong_demo_db_v1";
   var LS_SESSION = "biltong_session_employee";
@@ -301,9 +303,9 @@
   function seedDemo(){
     return {
       employees: [
-        { id:"emp-boss", pin:"9999", name:"Owner", isAdmin:true },
-        { id:"emp-1", pin:"1111", name:"Thabo", isAdmin:false },
-        { id:"emp-2", pin:"2222", name:"Aiden", isAdmin:false }
+        { id:"emp-boss", pin:"9A9B9C", name:"Owner", isAdmin:true },
+        { id:"emp-1", pin:"1A1B1C", name:"Thabo", isAdmin:false },
+        { id:"emp-2", pin:"2A2B2C", name:"Aiden", isAdmin:false }
       ],
       flavours: [
         { id:"f-trad", name:"Traditional", thresholdG:1500, lastStockG:4200, lastStockAt:Date.now()-1000*60*60*20 },
@@ -492,6 +494,13 @@
     }catch(e){}
   }
   setTheme();
+
+  function reportSaveError(err){
+    console.error("Save failed:", err);
+    var msg = (err && err.message) || String(err);
+    if(/permission/i.test(msg)) toast("The database rejected that change — check the Firestore rules");
+    else toast("Couldn't save: " + msg);
+  }
 
   function toast(msg){
     var el = document.getElementById("toast");
@@ -733,7 +742,7 @@
     '<h1 style="font-size:20px;">'+(isNew?"Add staff member":"Edit staff member")+'</h1>' +
     '<div class="card">' +
       '<div class="field"><label>Name</label><input id="emp-name" value="'+escapeAttr(e.name)+'" placeholder="First name"></div>' +
-      '<div class="field" style="margin-top:12px;"><label>4-digit PIN</label><input id="emp-pin" inputmode="numeric" maxlength="4" value="'+escapeAttr(e.pin)+'" placeholder="1234"></div>' +
+      '<div class="field" style="margin-top:12px;"><label>6-character code (0–9, A–C)</label><input id="emp-pin" maxlength="6" style="text-transform:uppercase;" value="'+escapeAttr(e.pin)+'" placeholder="e.g. 4B7A21"></div>' +
       '<label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13.5px;font-weight:600;"><input type="checkbox" id="emp-admin" '+(e.isAdmin?"checked":"")+' style="width:auto;"> Boss access (manage flavours, staff, thresholds)</label>' +
       '<div class="btnrow" style="margin-top:16px;">' +
         '<button class="btn btn-primary" style="flex:1;" id="btn-save-employee" data-id="'+e.id+'">Save</button>' +
@@ -824,11 +833,11 @@
 
   function renderLogin(){
     var dots = "";
-    for(var i=0;i<4;i++){
+    for(var i=0;i<PIN_LENGTH;i++){
       var cls = "pin-dot" + (i < state.pin.length ? " filled" : "") + (state.pinError ? " err" : "");
       dots += '<div class="'+cls+'"></div>';
     }
-    var keys = [1,2,3,4,5,6,7,8,9,"",0,"del"];
+    var keys = ["1","2","3","A","4","5","6","B","7","8","9","C","","0","del",""];
     var keypad = keys.map(function(k){
       if(k === ""){ return '<div></div>'; }
       if(k === "del"){ return '<button class="key ghost" id="key-del">delete</button>'; }
@@ -839,7 +848,7 @@
       '<div class="login-hero">' +
         '<div class="mark">B</div>' +
         '<h1>Biltong Floor Log</h1>' +
-        '<p>Enter your 4-digit PIN to clock on</p>' +
+        '<p>Enter your '+PIN_LENGTH+'-character code to clock on</p>' +
       '</div>' +
       '<div>' +
         '<div class="pin-display">'+dots+'</div>' +
@@ -852,10 +861,10 @@
   function bindLogin(){
     document.querySelectorAll("[data-key]").forEach(function(btn){
       btn.addEventListener("click", function(){
-        if(state.pin.length >= 4) return;
+        if(state.pin.length >= PIN_LENGTH) return;
         state.pin += btn.getAttribute("data-key");
         state.pinError = "";
-        if(state.pin.length === 4) tryLogin();
+        if(state.pin.length === PIN_LENGTH) tryLogin();
         else render();
       });
     });
@@ -915,8 +924,8 @@
       var dir = state.formData.dir;
       DB.logEvent({ type:"time", dir:dir, employeeId:state.employee.id, employeeName:state.employee.name }).then(function(){
         toast("Time-"+(dir==="in"?"in":"out")+" logged at "+fmtTime(Date.now()));
-        refreshEvents().then(function(){ go("home"); });
-      });
+        return refreshEvents();
+      }).then(function(){ go("home"); }).catch(reportSaveError);
     });
 
     // Stock
@@ -943,7 +952,7 @@
         if(flagged.length){ toast("Saved. Low stock: "+flagged.join(", ")); }
         else{ toast("Stock-"+dir+" saved"); }
         return refreshAll();
-      }).then(function(){ go("home"); });
+      }).then(function(){ go("home"); }).catch(reportSaveError);
     });
 
     // Cash
@@ -955,7 +964,7 @@
       DB.logEvent({ type:"cash", dir:dir, employeeId:state.employee.id, employeeName:state.employee.name, amount:amt }).then(function(){
         toast("Cash-"+dir+" saved: "+fmtMoney(amt));
         return refreshEvents();
-      }).then(function(){ go("home"); });
+      }).then(function(){ go("home"); }).catch(reportSaveError);
     });
 
     // Admin: flavours
@@ -974,11 +983,11 @@
       DB.saveFlavour({ id:id, name:name, thresholdG:threshold, lastStockG:stock, lastStockAt:Date.now() }).then(function(){
         toast("Saved");
         return refreshAll();
-      }).then(function(){ go("admin-flavours"); });
+      }).then(function(){ go("admin-flavours"); }).catch(reportSaveError);
     });
     var delFl = document.getElementById("btn-delete-flavour");
     if(delFl) delFl.addEventListener("click", function(){
-      DB.deleteFlavour(delFl.getAttribute("data-id")).then(refreshAll).then(function(){ go("admin-flavours"); });
+      DB.deleteFlavour(delFl.getAttribute("data-id")).then(refreshAll).then(function(){ go("admin-flavours"); }).catch(reportSaveError);
     });
 
     // Admin: employees
@@ -991,19 +1000,19 @@
     if(saveEmp) saveEmp.addEventListener("click", function(){
       var id = saveEmp.getAttribute("data-id") || uid();
       var name = document.getElementById("emp-name").value.trim();
-      var pin = document.getElementById("emp-pin").value.trim();
+      var pin = document.getElementById("emp-pin").value.trim().toUpperCase();
       var isAdmin = document.getElementById("emp-admin").checked;
-      if(!name || !/^\d{4}$/.test(pin)){ toast("Name and a 4-digit PIN are required"); return; }
+      if(!name || !PIN_PATTERN.test(pin)){ toast("Name and a 6-character code (0–9, A–C) are required"); return; }
       var clash = state.employees.find(function(e){ return e.pin === pin && e.id !== id; });
       if(clash){ toast("That PIN is already used by "+clash.name); return; }
       DB.saveEmployee({ id:id, name:name, pin:pin, isAdmin:isAdmin }).then(function(){
         toast("Saved");
         return refreshAll();
-      }).then(function(){ go("admin-employees"); });
+      }).then(function(){ go("admin-employees"); }).catch(reportSaveError);
     });
     var delEmp = document.getElementById("btn-delete-employee");
     if(delEmp) delEmp.addEventListener("click", function(){
-      DB.deleteEmployee(delEmp.getAttribute("data-id")).then(refreshAll).then(function(){ go("admin-employees"); });
+      DB.deleteEmployee(delEmp.getAttribute("data-id")).then(refreshAll).then(function(){ go("admin-employees"); }).catch(reportSaveError);
     });
 
     // Admin: connect
@@ -1046,7 +1055,7 @@
   function ensureOwnerSeed(){
     if(!DB.isCloud()) return Promise.resolve();
     if(state.employees.length > 0) return Promise.resolve();
-    return DB.saveEmployee({ name:"Owner", pin:"9999", isAdmin:true }).then(refreshAll);
+    return DB.saveEmployee({ name:"Owner", pin:"9A9B9C", isAdmin:true }).then(refreshAll);
   }
 
   function boot(initialData){
@@ -1092,5 +1101,3 @@
   }
 })();
 </script>
-
-</body></html>
