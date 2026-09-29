@@ -2,6 +2,9 @@
 <meta charset="utf-8">
 <title>Biltong Floor Log</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#a8611f">
+<link rel="apple-touch-icon" href="img/SafariCafe-logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -211,6 +214,14 @@
     display:flex; gap:10px; align-items:flex-start; background:var(--bad-soft); color:var(--bad);
     border:1px solid var(--bad); border-radius:12px; padding:12px 14px; font-size:13px; font-weight:600;
   }
+  .installbar{
+    display:flex; gap:10px; align-items:center; background:var(--accent-soft); color:var(--accent-strong);
+    border:1px solid var(--accent); border-radius:12px; padding:10px 12px; font-size:12.5px; font-weight:600;
+  }
+  .installbar .txt{ flex:1; }
+  .installbar button{ font-family:inherit; font-weight:700; font-size:12.5px; border-radius:8px; border:none; padding:7px 11px; cursor:pointer; white-space:nowrap; }
+  .installbar .go{ background:var(--accent); color:#fff; }
+  .installbar .dismiss{ background:transparent; color:var(--accent-strong); opacity:.75; }
 
   /* ---- forms ---- */
   .field{ display:flex; flex-direction:column; gap:6px; }
@@ -293,6 +304,20 @@
      on each device, or bake it into the file once the shop shares it.
   ========================================================================= */
 
+  // The shop's live Firebase project. Ships with the app so every phone
+  // connects automatically - see the note in DB.init() for why this is safe
+  // to have in plain sight. Set to null to make a fresh copy of this file
+  // start in local demo mode again.
+  var EMBEDDED_FIREBASE_CONFIG = {
+    apiKey: "AIzaSyCdNdsWpz0Olcby-mZXtTJX-2rDb-9iSU4",
+    authDomain: "biltong-popup-toowong.firebaseapp.com",
+    projectId: "biltong-popup-toowong",
+    storageBucket: "biltong-popup-toowong.firebasestorage.app",
+    messagingSenderId: "1081776861863",
+    appId: "1:1081776861863:web:2260bfa7182fc54c6fe182",
+    measurementId: "G-YF4HQFMSM5"
+  };
+
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
 
@@ -300,6 +325,7 @@
   var LS_DEMO = "biltong_demo_db_v1";
   var LS_SESSION = "biltong_session_employee";
   var LS_THEME = "biltong_theme";
+  var LS_INSTALL_DISMISSED = "biltong_install_dismissed";
 
   function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
   function todayKey(d){ d = d || new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
@@ -341,17 +367,28 @@
 
     init: function(){
       var self = this;
+      // EMBEDDED_FIREBASE_CONFIG (below) ships with the file itself, so every
+      // device that opens this page connects to the same shared database
+      // automatically - nobody has to paste anything in. It's not a secret:
+      // a Firebase web config only identifies the project: real protection
+      // comes from the Firestore security rules, not from hiding this.
+      // The Manage -> Database screen still exists as a manual override/fallback
+      // (e.g. testing against a different project), and takes priority if set.
+      var cfg = EMBEDDED_FIREBASE_CONFIG;
       var cfgRaw = null;
       try{ cfgRaw = localStorage.getItem(LS_CONFIG); }catch(e){}
       if(cfgRaw){
+        try{ cfg = JSON.parse(cfgRaw); }
+        catch(e){ console.warn("Stored Firebase config invalid, ignoring it.", e); }
+      }
+      if(cfg && cfg.apiKey && cfg.projectId){
         try{
-          var cfg = JSON.parse(cfgRaw);
           if(!firebase.apps.length){ firebase.initializeApp(cfg); }
           self._fs = firebase.firestore();
           self.mode = "cloud";
           return Promise.resolve();
         }catch(e){
-          console.warn("Firebase config invalid, falling back to demo mode.", e);
+          console.warn("Firebase init failed, falling back to demo mode.", e);
         }
       }
       self._demo = loadDemo();
@@ -361,7 +398,8 @@
 
     isCloud: function(){ return this.mode === "cloud"; },
     isCloudConfigured: function(){
-      try{ return !!localStorage.getItem(LS_CONFIG); }catch(e){ return false; }
+      try{ if(localStorage.getItem(LS_CONFIG)) return true; }catch(e){}
+      return !!(EMBEDDED_FIREBASE_CONFIG && EMBEDDED_FIREBASE_CONFIG.apiKey);
     },
 
     setCloudConfig: function(cfgObj){
@@ -491,8 +529,69 @@
     flavours: [],
     events: [],
     formData: {},
-    loading: true
+    loading: true,
+    canInstall: false,
+    installDismissed: false
   };
+
+  try{ state.installDismissed = localStorage.getItem(LS_INSTALL_DISMISSED) === "1"; }catch(e){}
+
+  function isStandaloneDisplay(){
+    try{
+      return window.matchMedia && window.matchMedia("(display-mode: standalone)").matches
+        || window.navigator.standalone === true;
+    }catch(e){ return false; }
+  }
+  function isIOSDevice(){
+    return /iphone|ipad|ipod/i.test(navigator.userAgent || "") && !window.MSStream;
+  }
+
+  var deferredInstallPrompt = null;
+  window.addEventListener("beforeinstallprompt", function(e){
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    state.canInstall = true;
+    render();
+  });
+  window.addEventListener("appinstalled", function(){
+    state.canInstall = false;
+    render();
+  });
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("sw.js").catch(function(){});
+  }
+
+  function renderInstallBanner(){
+    if(isStandaloneDisplay() || state.installDismissed) return "";
+    if(state.canInstall){
+      return '<div class="installbar">' +
+        '<div class="txt">Install this on your phone for one-tap access.</div>' +
+        '<button class="go" id="btn-install-app">Install</button>' +
+        '<button class="dismiss" id="btn-dismiss-install">Later</button>' +
+      '</div>';
+    }
+    if(isIOSDevice()){
+      return '<div class="installbar">' +
+        '<div class="txt">Add this to your Home Screen: tap Share, then "Add to Home Screen".</div>' +
+        '<button class="dismiss" id="btn-dismiss-install">Got it</button>' +
+      '</div>';
+    }
+    return "";
+  }
+  function bindInstallBanner(){
+    var go = document.getElementById("btn-install-app");
+    if(go) go.addEventListener("click", function(){
+      if(!deferredInstallPrompt) return;
+      deferredInstallPrompt.prompt();
+      deferredInstallPrompt.userChoice.then(function(){ deferredInstallPrompt = null; });
+    });
+    var dismiss = document.getElementById("btn-dismiss-install");
+    if(dismiss) dismiss.addEventListener("click", function(){
+      state.installDismissed = true;
+      try{ localStorage.setItem(LS_INSTALL_DISMISSED, "1"); }catch(e){}
+      render();
+    });
+  }
 
   function setTheme(){
     try{
@@ -567,7 +666,7 @@
     if(s.loading){ app.innerHTML = renderLoading(); return; }
     if(!s.employee){ app.innerHTML = renderLogin(); bindLogin(); return; }
 
-    var html = renderTopbar() + renderAlertBanner();
+    var html = renderTopbar() + renderInstallBanner() + renderAlertBanner();
 
     switch(s.screen){
       case "home": html += renderHome(); break;
@@ -613,7 +712,7 @@
   }
 
   function renderHome(){
-    var demoNote = DB.mode === "demo" ? '<div class="card" style="border-color:var(--warn); background:var(--warn-soft); color:var(--warn); font-size:12.5px; font-weight:600;">Running in demo mode on this device only. Connect a Firebase database from the boss menu so every phone shares the same log.</div>' : "";
+    var demoNote = DB.mode === "demo" ? '<div class="card" style="border-color:var(--warn); background:var(--warn-soft); color:var(--warn); font-size:12.5px; font-weight:600;">Running in demo mode on this device only - this copy of the app has no database wired in yet. See Manage -> Database.</div>' : "";
     return '' +
     demoNote +
     '<div class="section-title"><h2 class="eyebrow">Start of shift, in order</h2></div>' +
@@ -806,12 +905,12 @@
     return backRow("Manage") +
     '<h1 style="font-size:20px;">Shared database</h1>' +
     '<div class="card">' +
-      '<p style="font-size:13.5px;">Right now this device is '+(DB.isCloud() ? '<b style="color:var(--good);">connected to your shared Firebase database.</b>' : '<b style="color:var(--warn);">only saving to demo storage on this device</b> - other phones won\'t see the same stock, cash or staff.') +'</p>' +
-      '<p class="muted" style="font-size:12.5px;margin-top:8px;">To share data across every phone at the pop-up: create a free Firebase project, turn on Firestore, then paste the web app config below. Every device only needs to do this once. Also paste the security rules Claude gave you into Firestore -> Rules - they\'re what actually stops a checked-in/out record from ever being edited or deleted, on this device or any other.</p>' +
-      '<div class="field" style="margin-top:12px;"><label>Firebase config (paste the whole object)</label><textarea id="fb-config" placeholder=\'{"apiKey":"...","projectId":"...","...":"..."}\'>'+escapeHtml(cfgRaw)+'</textarea></div>' +
+      '<p style="font-size:13.5px;">Right now this device is '+(DB.isCloud() ? '<b style="color:var(--good);">connected to the shared Firebase database.</b>' : '<b style="color:var(--warn);">only saving to demo storage on this device</b> - other phones won\'t see the same stock, cash or staff.') +'</p>' +
+      '<p class="muted" style="font-size:12.5px;margin-top:8px;">This app already has the shop\'s database built in, so staff never need to touch this screen - every phone that opens the app connects automatically. This box is only for pointing a copy of the app at a *different* Firebase project (e.g. testing), which overrides the built-in one on this device only.</p>' +
+      '<div class="field" style="margin-top:12px;"><label>Override Firebase config (optional, paste the whole object)</label><textarea id="fb-config" placeholder=\'{"apiKey":"...","projectId":"...","...":"..."}\'>'+escapeHtml(cfgRaw)+'</textarea></div>' +
       '<div class="btnrow" style="margin-top:12px;">' +
-        '<button class="btn btn-primary" style="flex:1;" id="btn-save-config">Save & connect</button>' +
-        (DB.isCloud() ? '<button class="btn btn-ghost" id="btn-clear-config">Use demo instead</button>' : '') +
+        '<button class="btn btn-primary" style="flex:1;" id="btn-save-config">Save override & connect</button>' +
+        (cfgRaw ? '<button class="btn btn-ghost" id="btn-clear-config">Remove override</button>' : '') +
       '</div>' +
     '</div>';
   }
@@ -872,6 +971,7 @@
     return '' +
     '<div id="screen-login">' +
       '<img class="logo-bar" src="img/SafariCafe-logo.png" alt="Safari Cafe" style="margin-top:-20px;" onerror="this.style.display=\'none\'">' +
+      renderInstallBanner() +
       '<div class="login-hero">' +
         '<h1>Biltong Floor Log</h1>' +
         '<p>Enter your '+PIN_LENGTH+'-character code to clock on</p>' +
@@ -885,6 +985,7 @@
   }
 
   function bindLogin(){
+    bindInstallBanner();
     document.querySelectorAll("[data-key]").forEach(function(btn){
       btn.addEventListener("click", function(){
         if(state.pin.length >= PIN_LENGTH) return;
@@ -923,6 +1024,7 @@
   /* ============================= SCREEN BINDINGS ============================== */
 
   function bindScreen(){
+    bindInstallBanner();
     var back = document.getElementById("btn-back");
     if(back) back.addEventListener("click", function(){ go(state.screen.indexOf("admin-")===0 ? "admin" : "home"); });
 
@@ -1058,7 +1160,7 @@
     var clearCfg = document.getElementById("btn-clear-config");
     if(clearCfg) clearCfg.addEventListener("click", function(){
       DB.clearCloudConfig();
-      toast("Switched to demo mode. Reloading...");
+      toast("Override removed. Reloading...");
       setTimeout(function(){ location.reload(); }, 700);
     });
   }
