@@ -782,8 +782,8 @@
     return backRow("Manage") +
     '<h1 style="font-size:20px;">Shared database</h1>' +
     '<div class="card">' +
-      '<p style="font-size:13.5px;">Right now this device is '+(DB.isCloud() ? '<b style="color:var(--good);">connected to your shared Firebase database.</b>' : '<b style="color:var(--warn);">only saving to demo storage on this device</b> - other phones won't see the same stock, cash or staff.') +'</p>' +
-      '<p class="muted" style="font-size:12.5px;margin-top:8px;">To share data across every phone at the pop-up: create a free Firebase project, turn on Firestore, then paste the web app config below. Every device only needs to do this once. Also paste the security rules Claude gave you into Firestore -> Rules - they're what actually stops a checked-in/out record from ever being edited or deleted, on this device or any other.</p>' +
+      '<p style="font-size:13.5px;">Right now this device is '+(DB.isCloud() ? '<b style="color:var(--good);">connected to your shared Firebase database.</b>' : '<b style="color:var(--warn);">only saving to demo storage on this device</b> - other phones won\'t see the same stock, cash or staff.') +'</p>' +
+      '<p class="muted" style="font-size:12.5px;margin-top:8px;">To share data across every phone at the pop-up: create a free Firebase project, turn on Firestore, then paste the web app config below. Every device only needs to do this once. Also paste the security rules Claude gave you into Firestore -> Rules - they\'re what actually stops a checked-in/out record from ever being edited or deleted, on this device or any other.</p>' +
       '<div class="field" style="margin-top:12px;"><label>Firebase config (paste the whole object)</label><textarea id="fb-config" placeholder=\'{"apiKey":"...","projectId":"...","...":"..."}\'>'+escapeHtml(cfgRaw)+'</textarea></div>' +
       '<div class="btnrow" style="margin-top:12px;">' +
         '<button class="btn btn-primary" style="flex:1;" id="btn-save-config">Save & connect</button>' +
@@ -810,13 +810,13 @@
     var isPerm = /permission/i.test(msg);
     var isTimeout = err && err.isTimeout;
     return '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;padding-block:20px;">' +
-      '<div class="login-hero"><div class="mark" style="background:var(--bad);">!</div><h1>Can't reach the database</h1></div>' +
+      '<div class="login-hero"><div class="mark" style="background:var(--bad);">!</div><h1>Can\'t reach the database</h1></div>' +
       '<div class="card">' +
         (isTimeout ?
-          '<p style="font-size:13.5px;">The database never responded. If you're opening this from a Claude-hosted preview link, that's expected - this preview's sandbox blocks the live network connections Firestore needs. It will work once this page is hosted on a normal website (GitHub Pages, Firebase Hosting, Netlify, etc.) instead of opened as a Claude artifact link.</p>' +
-          '<p class="muted" style="font-size:12.5px;margin-top:8px;">If you've already hosted it elsewhere and still see this, double-check your Firestore rules are published and your device has internet access.</p>'
+          '<p style="font-size:13.5px;">The database never responded. If you\'re opening this from a Claude-hosted preview link, that\'s expected - this preview\'s sandbox blocks the live network connections Firestore needs. It will work once this page is hosted on a normal website (GitHub Pages, Firebase Hosting, Netlify, etc.) instead of opened as a Claude artifact link.</p>' +
+          '<p class="muted" style="font-size:12.5px;margin-top:8px;">If you\'ve already hosted it elsewhere and still see this, double-check your Firestore rules are published and your device has internet access.</p>'
         : isPerm ?
-          '<p style="font-size:13.5px;">Firestore is blocking every request. This almost always means the security rules haven't been published yet - a brand new Firestore project denies everything until you paste in rules.</p>' +
+          '<p style="font-size:13.5px;">Firestore is blocking every request. This almost always means the security rules haven\'t been published yet - a brand new Firestore project denies everything until you paste in rules.</p>' +
           '<p class="muted" style="font-size:12.5px;margin-top:8px;">In the Firebase console: Firestore Database -> Rules tab -> paste the rules Claude gave you -> Publish. Then reload this app.</p>'
           :
           '<p style="font-size:13.5px;">Something went wrong talking to Firestore.</p><p class="muted" style="font-size:12px;margin-top:8px;word-break:break-word;">'+escapeHtml(msg)+'</p>'
