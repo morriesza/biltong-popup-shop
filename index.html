@@ -299,7 +299,7 @@
   function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
   function todayKey(d){ d = d || new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
   function fmtTime(ts){ var d = new Date(ts); return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}); }
-  function fmtDateTime(ts){ var d = new Date(ts); return d.toLocaleDateString([], {day:"2-digit", month:"short"}) + " Â· " + fmtTime(ts); }
+  function fmtDateTime(ts){ var d = new Date(ts); return d.toLocaleDateString([], {day:"2-digit", month:"short"}) + " - " + fmtTime(ts); }
   function fmtMoney(n){ return "$" + (Math.round(n*100)/100).toFixed(2); }
 
   function seedDemo(){
@@ -313,7 +313,7 @@
         { id:"f-trad", name:"Traditional", thresholdG:1500, lastStockG:4200, lastStockAt:Date.now()-1000*60*60*20 },
         { id:"f-chilli", name:"Chilli Bites", thresholdG:1000, lastStockG:850, lastStockAt:Date.now()-1000*60*60*20 },
         { id:"f-peri", name:"Peri-Peri", thresholdG:1000, lastStockG:2100, lastStockAt:Date.now()-1000*60*60*20 },
-        { id:"f-droe", name:"DroÃ«wors", thresholdG:800, lastStockG:1200, lastStockAt:Date.now()-1000*60*60*20 }
+        { id:"f-droe", name:"Droewors", thresholdG:800, lastStockG:1200, lastStockAt:Date.now()-1000*60*60*20 }
       ],
       events: []
     };
@@ -500,7 +500,7 @@
   function reportSaveError(err){
     console.error("Save failed:", err);
     var msg = (err && err.message) || String(err);
-    if(/permission/i.test(msg)) toast("The database rejected that change — check the Firestore rules");
+    if(/permission/i.test(msg)) toast("The database rejected that change - check the Firestore rules");
     else toast("Couldn't save: " + msg);
   }
 
@@ -570,7 +570,7 @@
       '<div class="brand"><div class="mark">B</div><div class="name">Floor Log</div></div>' +
       '<div class="who">' +
         '<span class="dot"></span>' +
-        '<span>'+escapeHtml(state.employee.name)+(state.employee.isAdmin ? ' Â· Boss' : '')+'</span>' +
+        '<span>'+escapeHtml(state.employee.name)+(state.employee.isAdmin ? ' - Boss' : '')+'</span>' +
         '<button class="iconbtn" id="btn-logout" aria-label="Log out">'+svgIcon("logout")+'</button>' +
       '</div>' +
     '</div>';
@@ -594,15 +594,15 @@
     demoNote +
     '<div class="section-title"><h2 class="eyebrow">Start of shift, in order</h2></div>' +
     '<div class="tiles">' +
-      tile("time","in","clockIn","Time–In","Clock on") +
-      tile("cash","in","cashIn","Cash–In","Count the float") +
-      tile("stock","in","scaleIn","Stock–In","Weigh everything") +
+      tile("time","in","clockIn","Time-In","Clock on") +
+      tile("cash","in","cashIn","Cash-In","Count the float") +
+      tile("stock","in","scaleIn","Stock-In","Weigh everything") +
     '</div>' +
     '<div class="section-title"><h2 class="eyebrow">End of shift, in order</h2></div>' +
     '<div class="tiles">' +
-      tile("stock","out","scaleOut","Stock–Out","Weigh it again") +
-      tile("cash","out","cashOut","Cash–Out","Count the till") +
-      tile("time","out","clockOut","Time–Out","Clock off") +
+      tile("stock","out","scaleOut","Stock-Out","Weigh it again") +
+      tile("cash","out","cashOut","Cash-Out","Count the till") +
+      tile("time","out","clockOut","Time-Out","Clock off") +
     '</div>' +
     (state.employee.isAdmin ? '<div class="section-title"><h2 class="eyebrow">Boss</h2></div><div class="tiles"><button class="tile time" data-go="admin"><div class="glyph">'+svgIcon("admin")+'</div><div><div class="lbl">Manage</div><div class="sub">Flavours, thresholds, staff, log</div></div></button></div>' : '');
   }
@@ -646,7 +646,7 @@
     var rows = fls.map(function(f){
       var suggested = isIn ? (f.lastStockG||0) : "";
       return '<div class="weigh-row" data-flavour="'+f.id+'">' +
-        '<div class="name">'+escapeHtml(f.name)+'<span class="thr">threshold '+f.thresholdG+' g'+(isIn?(' Â· last close '+(f.lastStockG||0)+' g'):'')+'</span></div>' +
+        '<div class="name">'+escapeHtml(f.name)+'<span class="thr">threshold '+f.thresholdG+' g'+(isIn?(' - last close '+(f.lastStockG||0)+' g'):'')+'</span></div>' +
         '<input type="number" inputmode="decimal" class="tabular weigh-input" placeholder="0" value="'+suggested+'">' +
         '<div class="unit">g</div>' +
       '</div>';
@@ -655,7 +655,7 @@
     '<div class="card">' +
       '<div class="eyebrow">'+(isIn?"Stock-In":"Stock-Out")+'</div>' +
       '<h1 style="font-size:19px;margin-top:6px;">'+(isIn?"Weigh in every flavour":"Weigh out every flavour")+'</h1>' +
-      '<p class="muted" style="font-size:13px;margin-top:6px;">Enter the scale reading in grams for each one. '+(isIn?"This becomes today’s opening stock.":"This is compared against the low-stock thresholds.")+'</p>' +
+      '<p class="muted" style="font-size:13px;margin-top:6px;">Enter the scale reading in grams for each one. '+(isIn?"This becomes today's opening stock.":"This is compared against the low-stock thresholds.")+'</p>' +
     '</div>' +
     '<div class="card" style="padding-block:4px;">' + rows + '</div>' +
     '<button class="btn btn-primary" style="width:100%;" id="btn-submit-stock" data-dir="'+dir+'">Save '+(isIn?"stock-in":"stock-out")+'</button>';
@@ -683,7 +683,7 @@
     return backRow("Home") +
     '<h1 style="font-size:20px;">Manage the shop</h1>' +
     '<div class="tiles">' +
-      '<button class="tile time" data-go="admin-flavours"><div class="glyph">'+svgIcon("scaleIn")+'</div><div><div class="lbl">Flavours</div><div class="sub">'+state.flavours.length+' set up'+(low.length?' Â· '+low.length+' low':'')+'</div></div></button>' +
+      '<button class="tile time" data-go="admin-flavours"><div class="glyph">'+svgIcon("scaleIn")+'</div><div><div class="lbl">Flavours</div><div class="sub">'+state.flavours.length+' set up'+(low.length?' - '+low.length+' low':'')+'</div></div></button>' +
       '<button class="tile time" data-go="admin-employees"><div class="glyph">'+svgIcon("admin")+'</div><div><div class="lbl">Staff</div><div class="sub">'+state.employees.length+' PINs</div></div></button>' +
       '<button class="tile time" data-go="admin-log"><div class="glyph">'+svgIcon("clockIn")+'</div><div><div class="lbl">Activity log</div><div class="sub">All check-ins</div></div></button>' +
       '<button class="tile time" data-go="admin-connect"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Database</div><div class="sub">'+(DB.isCloud()?"Connected":"Demo mode")+'</div></div></button>' +
@@ -695,7 +695,7 @@
       var low = (f.lastStockG||0) <= (f.thresholdG||0);
       return '<div class="list-row">' +
         '<span class="swatch" style="background:'+(low?"var(--bad)":"var(--good)")+'"></span>' +
-        '<div class="main"><div class="t">'+escapeHtml(f.name)+'</div><div class="s">last close '+(f.lastStockG||0)+' g Â· threshold '+f.thresholdG+' g</div></div>' +
+        '<div class="main"><div class="t">'+escapeHtml(f.name)+'</div><div class="s">last close '+(f.lastStockG||0)+' g - threshold '+f.thresholdG+' g</div></div>' +
         (low?'<span class="pill low">Low</span>':'') +
         '<button class="iconbtn" data-edit-flavour="'+f.id+'">Edit</button>' +
       '</div>';
@@ -744,7 +744,7 @@
     '<h1 style="font-size:20px;">'+(isNew?"Add staff member":"Edit staff member")+'</h1>' +
     '<div class="card">' +
       '<div class="field"><label>Name</label><input id="emp-name" value="'+escapeAttr(e.name)+'" placeholder="First name"></div>' +
-      '<div class="field" style="margin-top:12px;"><label>6-character code (0–9, A–C)</label><input id="emp-pin" maxlength="6" style="text-transform:uppercase;" value="'+escapeAttr(e.pin)+'" placeholder="e.g. 4B7A21"></div>' +
+      '<div class="field" style="margin-top:12px;"><label>6-character code (0-9, A-C)</label><input id="emp-pin" maxlength="6" style="text-transform:uppercase;" value="'+escapeAttr(e.pin)+'" placeholder="e.g. 4B7A21"></div>' +
       '<label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13.5px;font-weight:600;"><input type="checkbox" id="emp-admin" '+(e.isAdmin?"checked":"")+' style="width:auto;"> Boss access (manage flavours, staff, thresholds)</label>' +
       '<div class="btnrow" style="margin-top:16px;">' +
         '<button class="btn btn-primary" style="flex:1;" id="btn-save-employee" data-id="'+e.id+'">Save</button>' +
@@ -758,10 +758,10 @@
     var rows = evs.map(function(e){
       var label = "", detail = "", color = "var(--text-dim)";
       if(e.type === "time"){ label = "Time-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName; color = e.dir==="in" ? "var(--good)" : "var(--bad)"; }
-      if(e.type === "cash"){ label = "Cash-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + " Â· " + fmtMoney(e.amount||0); color = "var(--good)"; }
+      if(e.type === "cash"){ label = "Cash-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + " - " + fmtMoney(e.amount||0); color = "var(--good)"; }
       if(e.type === "stock"){
         var low = (e.flagged||[]).length;
-        label = "Stock-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + (low ? " Â· "+low+" low" : "");
+        label = "Stock-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + (low ? " - "+low+" low" : "");
         color = low ? "var(--bad)" : "var(--accent)";
       }
       return '<div class="list-row">' +
@@ -772,7 +772,7 @@
     }).join("") || '<div class="empty">Nothing logged yet.</div>';
     return backRow("Manage") +
     '<h1 style="font-size:20px;">Activity log</h1>' +
-    '<p class="muted" style="font-size:12.5px;margin-top:-6px;">Every entry here is permanent once captured. Nobody, including you, can edit or delete one from the app — if something was mis-entered, log a correcting entry.</p>' +
+    '<p class="muted" style="font-size:12.5px;margin-top:-6px;">Every entry here is permanent once captured. Nobody, including you, can edit or delete one from the app - if something was mis-entered, log a correcting entry.</p>' +
     '<div class="card" style="padding-block:4px;">'+rows+'</div>';
   }
 
@@ -782,8 +782,8 @@
     return backRow("Manage") +
     '<h1 style="font-size:20px;">Shared database</h1>' +
     '<div class="card">' +
-      '<p style="font-size:13.5px;">Right now this device is '+(DB.isCloud() ? '<b style="color:var(--good);">connected to your shared Firebase database.</b>' : '<b style="color:var(--warn);">only saving to demo storage on this device</b> — other phones won’t see the same stock, cash or staff.') +'</p>' +
-      '<p class="muted" style="font-size:12.5px;margin-top:8px;">To share data across every phone at the pop-up: create a free Firebase project, turn on Firestore, then paste the web app config below. Every device only needs to do this once. Also paste the security rules Claude gave you into Firestore → Rules — they’re what actually stops a checked-in/out record from ever being edited or deleted, on this device or any other.</p>' +
+      '<p style="font-size:13.5px;">Right now this device is '+(DB.isCloud() ? '<b style="color:var(--good);">connected to your shared Firebase database.</b>' : '<b style="color:var(--warn);">only saving to demo storage on this device</b> - other phones won't see the same stock, cash or staff.') +'</p>' +
+      '<p class="muted" style="font-size:12.5px;margin-top:8px;">To share data across every phone at the pop-up: create a free Firebase project, turn on Firestore, then paste the web app config below. Every device only needs to do this once. Also paste the security rules Claude gave you into Firestore -> Rules - they're what actually stops a checked-in/out record from ever being edited or deleted, on this device or any other.</p>' +
       '<div class="field" style="margin-top:12px;"><label>Firebase config (paste the whole object)</label><textarea id="fb-config" placeholder=\'{"apiKey":"...","projectId":"...","...":"..."}\'>'+escapeHtml(cfgRaw)+'</textarea></div>' +
       '<div class="btnrow" style="margin-top:12px;">' +
         '<button class="btn btn-primary" style="flex:1;" id="btn-save-config">Save & connect</button>' +
@@ -801,7 +801,7 @@
   function renderLoading(){
     return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text-dim);font-size:13.5px;">' +
       '<div class="mark" style="width:44px;height:44px;border-radius:13px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Oswald;font-weight:700;font-size:20px;">B</div>' +
-      '<div>Loading…</div>' +
+      '<div>Loading...</div>' +
     '</div>';
   }
 
@@ -810,14 +810,14 @@
     var isPerm = /permission/i.test(msg);
     var isTimeout = err && err.isTimeout;
     return '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;padding-block:20px;">' +
-      '<div class="login-hero"><div class="mark" style="background:var(--bad);">!</div><h1>Can’t reach the database</h1></div>' +
+      '<div class="login-hero"><div class="mark" style="background:var(--bad);">!</div><h1>Can't reach the database</h1></div>' +
       '<div class="card">' +
         (isTimeout ?
-          '<p style="font-size:13.5px;">The database never responded. If you’re opening this from a Claude-hosted preview link, that’s expected — this preview’s sandbox blocks the live network connections Firestore needs. It will work once this page is hosted on a normal website (GitHub Pages, Firebase Hosting, Netlify, etc.) instead of opened as a Claude artifact link.</p>' +
-          '<p class="muted" style="font-size:12.5px;margin-top:8px;">If you’ve already hosted it elsewhere and still see this, double-check your Firestore rules are published and your device has internet access.</p>'
+          '<p style="font-size:13.5px;">The database never responded. If you're opening this from a Claude-hosted preview link, that's expected - this preview's sandbox blocks the live network connections Firestore needs. It will work once this page is hosted on a normal website (GitHub Pages, Firebase Hosting, Netlify, etc.) instead of opened as a Claude artifact link.</p>' +
+          '<p class="muted" style="font-size:12.5px;margin-top:8px;">If you've already hosted it elsewhere and still see this, double-check your Firestore rules are published and your device has internet access.</p>'
         : isPerm ?
-          '<p style="font-size:13.5px;">Firestore is blocking every request. This almost always means the security rules haven’t been published yet — a brand new Firestore project denies everything until you paste in rules.</p>' +
-          '<p class="muted" style="font-size:12.5px;margin-top:8px;">In the Firebase console: Firestore Database → Rules tab → paste the rules Claude gave you → Publish. Then reload this app.</p>'
+          '<p style="font-size:13.5px;">Firestore is blocking every request. This almost always means the security rules haven't been published yet - a brand new Firestore project denies everything until you paste in rules.</p>' +
+          '<p class="muted" style="font-size:12.5px;margin-top:8px;">In the Firebase console: Firestore Database -> Rules tab -> paste the rules Claude gave you -> Publish. Then reload this app.</p>'
           :
           '<p style="font-size:13.5px;">Something went wrong talking to Firestore.</p><p class="muted" style="font-size:12px;margin-top:8px;word-break:break-word;">'+escapeHtml(msg)+'</p>'
         ) +
@@ -1004,7 +1004,7 @@
       var name = document.getElementById("emp-name").value.trim();
       var pin = document.getElementById("emp-pin").value.trim().toUpperCase();
       var isAdmin = document.getElementById("emp-admin").checked;
-      if(!name || !PIN_PATTERN.test(pin)){ toast("Name and a 6-character code (0–9, A–C) are required"); return; }
+      if(!name || !PIN_PATTERN.test(pin)){ toast("Name and a 6-character code (0-9, A-C) are required"); return; }
       var clash = state.employees.find(function(e){ return e.pin === pin && e.id !== id; });
       if(clash){ toast("That PIN is already used by "+clash.name); return; }
       DB.saveEmployee({ id:id, name:name, pin:pin, isAdmin:isAdmin }).then(function(){
@@ -1025,7 +1025,7 @@
         var cfg = JSON.parse(raw);
         if(!cfg.apiKey || !cfg.projectId){ throw new Error("missing fields"); }
         DB.setCloudConfig(cfg);
-        toast("Connected. Reloading…");
+        toast("Connected. Reloading...");
         setTimeout(function(){ location.reload(); }, 700);
       }catch(e){
         toast("That doesn't look like a valid Firebase config");
@@ -1034,7 +1034,7 @@
     var clearCfg = document.getElementById("btn-clear-config");
     if(clearCfg) clearCfg.addEventListener("click", function(){
       DB.clearCloudConfig();
-      toast("Switched to demo mode. Reloading…");
+      toast("Switched to demo mode. Reloading...");
       setTimeout(function(){ location.reload(); }, 700);
     });
   }
