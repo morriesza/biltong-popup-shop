@@ -1,0 +1,1096 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Biltong Floor Log</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    color-scheme: light;
+    --bg:#f6f1e8;
+    --surface:#ffffff;
+    --surface-2:#efe6d6;
+    --border:#ddccae;
+    --text:#241d13;
+    --text-dim:#7a6b52;
+    --accent:#a8611f;
+    --accent-strong:#8a4d15;
+    --accent-soft:#f0dcc0;
+    --good:#4b7a3e;
+    --good-soft:#e2ecdb;
+    --warn:#a8790f;
+    --warn-soft:#f5e8c6;
+    --bad:#a8341f;
+    --bad-soft:#f6ded8;
+    --shadow: 0 1px 2px rgba(36,29,19,.06), 0 6px 16px rgba(36,29,19,.08);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      color-scheme: dark;
+      --bg:#161109;
+      --surface:#211a10;
+      --surface-2:#2b2216;
+      --border:#3d3120;
+      --text:#f3ead9;
+      --text-dim:#b4a487;
+      --accent:#e0913f;
+      --accent-strong:#f0aa5c;
+      --accent-soft:#3a2916;
+      --good:#8fbf7a;
+      --good-soft:#233420;
+      --warn:#e0b93a;
+      --warn-soft:#3a2f14;
+      --bad:#e0725a;
+      --bad-soft:#3a1e17;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 20px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --bg:#161109;
+    --surface:#211a10;
+    --surface-2:#2b2216;
+    --border:#3d3120;
+    --text:#f3ead9;
+    --text-dim:#b4a487;
+    --accent:#e0913f;
+    --accent-strong:#f0aa5c;
+    --accent-soft:#3a2916;
+    --good:#8fbf7a;
+    --good-soft:#233420;
+    --warn:#e0b93a;
+    --warn-soft:#3a2f14;
+    --bad:#e0725a;
+    --bad-soft:#3a1e17;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 20px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Public Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  h1,h2,h3,.display{
+    font-family:'Oswald', 'Public Sans', sans-serif;
+    text-transform:uppercase;
+    letter-spacing:.02em;
+    text-wrap:balance;
+    margin:0;
+  }
+  .tabular{ font-variant-numeric: tabular-nums; }
+  button{ font-family:inherit; }
+  #app{
+    max-width:480px;
+    margin:0 auto;
+    min-height:100%;
+    display:flex;
+    flex-direction:column;
+    padding-inline:16px;
+    padding-block: calc(env(safe-area-inset-top,0px) + 12px) calc(env(safe-area-inset-bottom,0px) + 20px);
+    gap:14px;
+  }
+  .topbar{
+    position:sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index:10;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    background:var(--bg);
+    padding-block:6px;
+    margin-inline:-16px;
+    padding-inline:16px;
+    border-bottom:1px solid var(--border);
+  }
+  .brand{ display:flex; align-items:center; gap:9px; }
+  .brand .mark{
+    width:30px;height:30px;border-radius:8px;
+    background:var(--accent); color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Oswald',sans-serif; font-weight:700; font-size:15px;
+    flex:none;
+  }
+  .brand .name{ font-size:15px; font-weight:700; letter-spacing:.03em; }
+  .who{
+    display:flex; align-items:center; gap:8px;
+    font-size:12.5px; color:var(--text-dim);
+  }
+  .who .dot{ width:7px;height:7px;border-radius:50%;background:var(--good); flex:none; }
+  .iconbtn{
+    border:1px solid var(--border); background:var(--surface); color:var(--text-dim);
+    border-radius:9px; padding:7px 10px; font-size:12.5px; font-weight:600; cursor:pointer;
+  }
+  .iconbtn:active{ background:var(--surface-2); }
+
+  .card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:16px;
+    box-shadow:var(--shadow);
+  }
+  .muted{ color:var(--text-dim); }
+  .eyebrow{
+    font-family:'Oswald',sans-serif; text-transform:uppercase; letter-spacing:.12em;
+    font-size:11.5px; color:var(--text-dim); font-weight:600;
+  }
+
+  /* ---- Login ---- */
+  #screen-login{ flex:1; display:flex; flex-direction:column; justify-content:center; gap:22px; padding-block:20px; }
+  .login-hero{ text-align:center; display:flex; flex-direction:column; align-items:center; gap:10px; }
+  .login-hero .mark{
+    width:56px;height:56px;border-radius:16px;background:var(--accent); color:#fff;
+    display:flex;align-items:center;justify-content:center; font-family:'Oswald',sans-serif;
+    font-weight:700; font-size:26px; box-shadow:var(--shadow);
+  }
+  .login-hero h1{ font-size:22px; }
+  .login-hero p{ margin:0; color:var(--text-dim); font-size:13.5px; }
+  .pin-display{
+    display:flex; justify-content:center; gap:12px; margin-block:4px;
+  }
+  .pin-dot{
+    width:16px;height:16px;border-radius:50%;border:2px solid var(--border); background:transparent;
+    transition:background .12s, border-color .12s;
+  }
+  .pin-dot.filled{ background:var(--accent); border-color:var(--accent); }
+  .pin-dot.err{ background:var(--bad); border-color:var(--bad); }
+  .keypad{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:10px; max-width:280px; margin-inline:auto; width:100%;
+  }
+  .key{
+    aspect-ratio:1; border-radius:16px; border:1px solid var(--border); background:var(--surface);
+    font-family:'Oswald',sans-serif; font-size:22px; font-weight:600; color:var(--text);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:var(--shadow);
+  }
+  .key:active{ background:var(--surface-2); }
+  .key.ghost{ background:transparent; border-color:transparent; box-shadow:none; color:var(--text-dim); font-size:14px; }
+  .login-err{
+    text-align:center; color:var(--bad); font-size:13px; font-weight:600; min-height:18px;
+  }
+
+  /* ---- Home grid ---- */
+  .section-title{ display:flex; align-items:baseline; justify-content:space-between; margin-block-start:4px;}
+  .section-title h2{ font-size:13px; }
+  .tiles{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .tile{
+    border-radius:16px; border:1px solid var(--border); padding:16px 14px;
+    display:flex; flex-direction:column; gap:20px; cursor:pointer; text-align:left;
+    box-shadow:var(--shadow); position:relative; overflow:hidden;
+  }
+  .tile .glyph{ width:30px;height:30px; flex:none; }
+  .tile .lbl{ font-family:'Oswald',sans-serif; font-size:15px; font-weight:600; text-transform:uppercase; letter-spacing:.02em; }
+  .tile .sub{ font-size:11.5px; margin-top:4px; }
+  .tile.time{ background:var(--surface); color:var(--text); }
+  .tile.time .sub{ color: var(--text-dim); }
+  .tile.stock{ background:var(--accent-soft); color:var(--accent-strong); }
+  .tile.stock .sub{ color:var(--accent-strong); opacity:.75; }
+  .tile.cash{ background:var(--good-soft); color:var(--good); }
+  .tile.cash .sub{ color:var(--good); opacity:.8; }
+  .tile.out{ }
+  .status-row{ display:flex; gap:8px; flex-wrap:wrap; }
+  .pill{
+    display:inline-flex; align-items:center; gap:6px; border-radius:999px; padding:5px 10px;
+    font-size:11.5px; font-weight:600; border:1px solid transparent;
+  }
+  .pill.open{ background:var(--good-soft); color:var(--good); }
+  .pill.pending{ background:var(--warn-soft); color:var(--warn); }
+  .pill.closed{ background:var(--surface-2); color:var(--text-dim); }
+  .pill.low{ background:var(--bad-soft); color:var(--bad); }
+
+  .alertbar{
+    display:flex; gap:10px; align-items:flex-start; background:var(--bad-soft); color:var(--bad);
+    border:1px solid var(--bad); border-radius:12px; padding:12px 14px; font-size:13px; font-weight:600;
+  }
+
+  /* ---- forms ---- */
+  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field label{ font-size:12px; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; }
+  .field input, .field select{
+    border:1px solid var(--border); background:var(--surface); color:var(--text);
+    border-radius:10px; padding:11px 12px; font-size:15px; font-family:inherit; width:100%;
+  }
+  .field input:focus, .field select:focus{ outline:2px solid var(--accent); outline-offset:1px; }
+  .weigh-row{
+    display:flex; align-items:center; gap:10px; padding-block:10px; border-bottom:1px solid var(--border);
+  }
+  .weigh-row:last-child{ border-bottom:none; }
+  .weigh-row .name{ flex:1; font-weight:600; font-size:14.5px; }
+  .weigh-row .name .thr{ display:block; font-size:11px; font-weight:400; color:var(--text-dim); }
+  .weigh-row input{ width:92px; text-align:right; }
+  .weigh-row .unit{ font-size:12px; color:var(--text-dim); width:22px; }
+  .flag{ color:var(--bad); font-weight:700; font-size:11px; }
+
+  .btn{
+    border:none; border-radius:12px; padding:14px; font-size:14.5px; font-weight:700; cursor:pointer;
+    font-family:'Oswald',sans-serif; text-transform:uppercase; letter-spacing:.03em;
+  }
+  .btn-primary{ background:var(--accent); color:#fff; }
+  .btn-primary:active{ background:var(--accent-strong); }
+  .btn-ghost{ background:var(--surface-2); color:var(--text); border:1px solid var(--border); }
+  .btn-danger{ background:var(--bad); color:#fff; }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+  .btnrow{ display:flex; gap:10px; }
+  .backrow{ display:flex; align-items:center; gap:8px; margin-block-end:2px; }
+  .backrow button{
+    background:none;border:none;color:var(--text-dim); font-weight:600; font-size:13px; cursor:pointer;
+    display:flex; align-items:center; gap:4px; padding:4px 0;
+  }
+
+  .list-row{ display:flex; align-items:center; gap:10px; padding-block:11px; border-bottom:1px solid var(--border); }
+  .list-row:last-child{ border-bottom:none; }
+  .list-row .main{ flex:1; min-width:0; }
+  .list-row .t{ font-weight:600; font-size:14px; }
+  .list-row .s{ font-size:12px; color:var(--text-dim); }
+  .swatch{ width:10px;height:10px;border-radius:3px;flex:none; }
+
+  .empty{ text-align:center; padding:28px 10px; color:var(--text-dim); font-size:13.5px; }
+
+  .toast{
+    position:fixed; left:50%; bottom:calc(env(safe-area-inset-bottom,0px) + 22px); transform:translateX(-50%);
+    background:var(--text); color:var(--bg); padding:11px 18px; border-radius:999px; font-size:13.5px; font-weight:600;
+    box-shadow:var(--shadow); z-index:50; max-width:88%; text-align:center;
+    opacity:0; pointer-events:none; transition:opacity .2s, transform .2s;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(-4px); }
+
+  textarea{
+    width:100%; min-height:130px; border:1px solid var(--border); border-radius:10px; padding:11px;
+    font-family:ui-monospace, monospace; font-size:12.5px; background:var(--surface); color:var(--text);
+  }
+  .tag{ display:inline-block; background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:2px 7px; font-size:11px; color:var(--text-dim); }
+
+  [hidden]{ display:none !important; }
+  @media (prefers-reduced-motion: reduce){ *{ transition:none !important; } }
+</style>
+
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+
+<!-- Firebase (only loaded/used when the shop configures it) -->
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ============================= DATA LAYER =============================
+     Two backends behind one API:
+       - "cloud": Firestore, when the shop has pasted in a Firebase config
+       - "demo": localStorage, seeded with sample data, used until then
+     Firestore client config is not a secret (security comes from Firestore
+     rules), so it's safe to store it directly on the page via localStorage
+     on each device, or bake it into the file once the shop shares it.
+  ========================================================================= */
+
+  var LS_CONFIG = "biltong_firebase_config";
+  var LS_DEMO = "biltong_demo_db_v1";
+  var LS_SESSION = "biltong_session_employee";
+  var LS_THEME = "biltong_theme";
+
+  function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+  function todayKey(d){ d = d || new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+  function fmtTime(ts){ var d = new Date(ts); return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}); }
+  function fmtDateTime(ts){ var d = new Date(ts); return d.toLocaleDateString([], {day:"2-digit", month:"short"}) + " Â· " + fmtTime(ts); }
+  function fmtMoney(n){ return "$" + (Math.round(n*100)/100).toFixed(2); }
+
+  function seedDemo(){
+    return {
+      employees: [
+        { id:"emp-boss", pin:"9999", name:"Owner", isAdmin:true },
+        { id:"emp-1", pin:"1111", name:"Thabo", isAdmin:false },
+        { id:"emp-2", pin:"2222", name:"Aiden", isAdmin:false }
+      ],
+      flavours: [
+        { id:"f-trad", name:"Traditional", thresholdG:1500, lastStockG:4200, lastStockAt:Date.now()-1000*60*60*20 },
+        { id:"f-chilli", name:"Chilli Bites", thresholdG:1000, lastStockG:850, lastStockAt:Date.now()-1000*60*60*20 },
+        { id:"f-peri", name:"Peri-Peri", thresholdG:1000, lastStockG:2100, lastStockAt:Date.now()-1000*60*60*20 },
+        { id:"f-droe", name:"DroÃ«wors", thresholdG:800, lastStockG:1200, lastStockAt:Date.now()-1000*60*60*20 }
+      ],
+      events: []
+    };
+  }
+
+  function loadDemo(){
+    try{
+      var raw = localStorage.getItem(LS_DEMO);
+      if(!raw){ var d = seedDemo(); localStorage.setItem(LS_DEMO, JSON.stringify(d)); return d; }
+      return JSON.parse(raw);
+    }catch(e){ return seedDemo(); }
+  }
+  function saveDemo(db){ try{ localStorage.setItem(LS_DEMO, JSON.stringify(db)); }catch(e){} }
+
+  var DB = {
+    mode: "demo", // "demo" | "cloud"
+    _demo: null,
+    _fs: null,
+    _listeners: [],
+
+    init: function(){
+      var self = this;
+      var cfgRaw = null;
+      try{ cfgRaw = localStorage.getItem(LS_CONFIG); }catch(e){}
+      if(cfgRaw){
+        try{
+          var cfg = JSON.parse(cfgRaw);
+          if(!firebase.apps.length){ firebase.initializeApp(cfg); }
+          self._fs = firebase.firestore();
+          self.mode = "cloud";
+          return Promise.resolve();
+        }catch(e){
+          console.warn("Firebase config invalid, falling back to demo mode.", e);
+        }
+      }
+      self._demo = loadDemo();
+      self.mode = "demo";
+      return Promise.resolve();
+    },
+
+    isCloud: function(){ return this.mode === "cloud"; },
+    isCloudConfigured: function(){
+      try{ return !!localStorage.getItem(LS_CONFIG); }catch(e){ return false; }
+    },
+
+    setCloudConfig: function(cfgObj){
+      localStorage.setItem(LS_CONFIG, JSON.stringify(cfgObj));
+    },
+    clearCloudConfig: function(){
+      localStorage.removeItem(LS_CONFIG);
+    },
+
+    getEmployees: function(){
+      if(this.mode === "demo") return Promise.resolve(this._demo.employees.slice());
+      return this._fs.collection("employees").get().then(function(snap){
+        var out = []; snap.forEach(function(doc){ out.push(Object.assign({id:doc.id}, doc.data())); });
+        return out;
+      });
+    },
+    saveEmployee: function(emp){
+      if(this.mode === "demo"){
+        var list = this._demo.employees;
+        var i = list.findIndex(function(e){ return e.id === emp.id; });
+        if(i>=0) list[i] = emp; else list.push(emp);
+        saveDemo(this._demo);
+        return Promise.resolve(emp);
+      }
+      var id = emp.id || uid();
+      var data = Object.assign({}, emp); delete data.id;
+      return this._fs.collection("employees").doc(id).set(data).then(function(){ return Object.assign({id:id}, data); });
+    },
+    deleteEmployee: function(id){
+      if(this.mode === "demo"){
+        this._demo.employees = this._demo.employees.filter(function(e){ return e.id !== id; });
+        saveDemo(this._demo);
+        return Promise.resolve();
+      }
+      return this._fs.collection("employees").doc(id).delete();
+    },
+
+    getFlavours: function(){
+      if(this.mode === "demo") return Promise.resolve(this._demo.flavours.slice());
+      return this._fs.collection("flavours").get().then(function(snap){
+        var out = []; snap.forEach(function(doc){ out.push(Object.assign({id:doc.id}, doc.data())); });
+        return out;
+      });
+    },
+    saveFlavour: function(fl){
+      if(this.mode === "demo"){
+        var list = this._demo.flavours;
+        var i = list.findIndex(function(f){ return f.id === fl.id; });
+        if(i>=0) list[i] = fl; else list.push(fl);
+        saveDemo(this._demo);
+        return Promise.resolve(fl);
+      }
+      var id = fl.id || uid();
+      var data = Object.assign({}, fl); delete data.id;
+      return this._fs.collection("flavours").doc(id).set(data).then(function(){ return Object.assign({id:id}, data); });
+    },
+    deleteFlavour: function(id){
+      if(this.mode === "demo"){
+        this._demo.flavours = this._demo.flavours.filter(function(f){ return f.id !== id; });
+        saveDemo(this._demo);
+        return Promise.resolve();
+      }
+      return this._fs.collection("flavours").doc(id).delete();
+    },
+
+    // Deliberately narrow: a stock check-in/out only ever touches the two
+    // "current reading" fields on a flavour, never its name or threshold.
+    // This is also what the Firestore rules below allow an open write to do.
+    updateStockReading: function(id, weightG){
+      if(this.mode === "demo"){
+        var f = this._demo.flavours.find(function(x){ return x.id === id; });
+        if(f){ f.lastStockG = weightG; f.lastStockAt = Date.now(); saveDemo(this._demo); }
+        return Promise.resolve();
+      }
+      return this._fs.collection("flavours").doc(id).update({
+        lastStockG: weightG,
+        lastStockAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    },
+
+    // Events are an append-only audit log: captured once, never edited or
+    // deleted, by staff or the owner, from this app or from Firestore
+    // rules. A mistake gets a new correcting entry, not a rewritten one.
+    logEvent: function(evt){
+      var self = this;
+      if(this.mode === "demo"){
+        evt = Object.assign({ id: uid(), createdAt: Date.now() }, evt);
+        this._demo.events.unshift(evt);
+        saveDemo(this._demo);
+        return Promise.resolve(evt);
+      }
+      var id = uid();
+      var data = Object.assign({}, evt, { createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+      return this._fs.collection("events").doc(id).set(data).then(function(){
+        return Object.assign({ id: id, createdAt: Date.now() }, evt);
+      });
+    },
+    getEvents: function(limit){
+      limit = limit || 200;
+      if(this.mode === "demo") return Promise.resolve(this._demo.events.slice(0, limit));
+      return this._fs.collection("events").orderBy("createdAt","desc").limit(limit).get().then(function(snap){
+        var out = []; snap.forEach(function(doc){
+          var d = doc.data();
+          out.push(Object.assign({id:doc.id}, d, { createdAt: toMillis(d.createdAt) }));
+        });
+        return out;
+      });
+    }
+  };
+
+  function toMillis(ts){
+    if(ts == null) return Date.now();
+    if(typeof ts === "number") return ts;
+    if(typeof ts.toMillis === "function") return ts.toMillis();
+    if(typeof ts.seconds === "number") return ts.seconds * 1000;
+    return Date.now();
+  }
+
+  /* ============================= APP STATE =============================== */
+
+  var state = {
+    screen: "login",
+    pin: "",
+    pinError: "",
+    employee: null,
+    employees: [],
+    flavours: [],
+    events: [],
+    formData: {},
+    loading: true
+  };
+
+  function setTheme(){
+    try{
+      var t = localStorage.getItem(LS_THEME);
+      if(t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+    }catch(e){}
+  }
+  setTheme();
+
+  function toast(msg){
+    var el = document.getElementById("toast");
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function(){ el.classList.remove("show"); }, 2400);
+  }
+
+  function go(screen, data){
+    state.screen = screen;
+    state.formData = data || {};
+    render();
+  }
+
+  function svgIcon(name, color){
+    var stroke = color || "currentColor";
+    var icons = {
+      clockIn: '<path d="M12 8v4l3 2" stroke="'+stroke+'" stroke-width="2" fill="none" stroke-linecap="round"/><circle cx="12" cy="12" r="9" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M12 3v2M3 12h2" stroke="'+stroke+'" stroke-width="2" stroke-linecap="round"/>',
+      clockOut: '<path d="M12 8v4l3 2" stroke="'+stroke+'" stroke-width="2" fill="none" stroke-linecap="round"/><circle cx="12" cy="12" r="9" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M6 6l2 2M18 6l-2 2" stroke="'+stroke+'" stroke-width="2" stroke-linecap="round"/>',
+      scaleIn: '<rect x="4" y="10" width="16" height="9" rx="2" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M8 10V8a4 4 0 018 0v2" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M12 13v3" stroke="'+stroke+'" stroke-width="2" stroke-linecap="round"/>',
+      scaleOut: '<rect x="4" y="10" width="16" height="9" rx="2" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M8 10V8a4 4 0 018 0v2" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M9.5 14.5l5 3M14.5 14.5l-5 3" stroke="'+stroke+'" stroke-width="2" stroke-linecap="round"/>',
+      cashIn: '<rect x="3" y="7" width="18" height="12" rx="2" stroke="'+stroke+'" stroke-width="2" fill="none"/><circle cx="12" cy="13" r="2.6" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M12 4v3M9 4h6" stroke="'+stroke+'" stroke-width="2" stroke-linecap="round"/>',
+      cashOut: '<rect x="3" y="7" width="18" height="12" rx="2" stroke="'+stroke+'" stroke-width="2" fill="none"/><circle cx="12" cy="13" r="2.6" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M8 4l4 3 4-3" stroke="'+stroke+'" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+      admin: '<circle cx="12" cy="8" r="3.4" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M5 20c1.2-4 4-6 7-6s5.8 2 7 6" stroke="'+stroke+'" stroke-width="2" fill="none" stroke-linecap="round"/>',
+      back: '<path d="M14.5 6l-6 6 6 6" stroke="'+stroke+'" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+      logout: '<path d="M9 4H5a1 1 0 00-1 1v14a1 1 0 001 1h4M15 16l4-4-4-4M19 12H9" stroke="'+stroke+'" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
+    };
+    return '<svg viewBox="0 0 24 24" width="20" height="20" fill="none">'+(icons[name]||"")+'</svg>';
+  }
+
+  /* ============================= RENDER ============================== */
+
+  var app = document.getElementById("app");
+
+  function render(){
+    var s = state;
+    if(s.bootError){ app.innerHTML = renderBootError(s.bootError); bindBootError(); return; }
+    if(s.loading){ app.innerHTML = renderLoading(); return; }
+    if(!s.employee){ app.innerHTML = renderLogin(); bindLogin(); return; }
+
+    var html = renderTopbar() + renderAlertBanner();
+
+    switch(s.screen){
+      case "home": html += renderHome(); break;
+      case "time": html += renderTime(s.formData.dir); break;
+      case "stock": html += renderStock(s.formData.dir); break;
+      case "cash": html += renderCash(s.formData.dir); break;
+      case "admin": html += renderAdmin(); break;
+      case "admin-flavours": html += renderAdminFlavours(); break;
+      case "admin-flavour-edit": html += renderFlavourEdit(s.formData.id); break;
+      case "admin-employees": html += renderAdminEmployees(); break;
+      case "admin-employee-edit": html += renderEmployeeEdit(s.formData.id); break;
+      case "admin-log": html += renderAdminLog(); break;
+      case "admin-connect": html += renderAdminConnect(); break;
+      default: html += renderHome();
+    }
+    app.innerHTML = html;
+    bindScreen();
+  }
+
+  function renderTopbar(){
+    return '' +
+    '<div class="topbar">' +
+      '<div class="brand"><div class="mark">B</div><div class="name">Floor Log</div></div>' +
+      '<div class="who">' +
+        '<span class="dot"></span>' +
+        '<span>'+escapeHtml(state.employee.name)+(state.employee.isAdmin ? ' Â· Boss' : '')+'</span>' +
+        '<button class="iconbtn" id="btn-logout" aria-label="Log out">'+svgIcon("logout")+'</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function lowStockList(){
+    return state.flavours.filter(function(f){ return (f.lastStockG||0) <= (f.thresholdG||0); });
+  }
+
+  function renderAlertBanner(){
+    if(state.screen === "admin-connect") return "";
+    var low = lowStockList();
+    if(!low.length) return "";
+    var names = low.map(function(f){ return f.name; }).join(", ");
+    return '<div class="alertbar">'+svgIcon("scaleOut")+'<div>Low stock: '+escapeHtml(names)+'. Time to restock.</div></div>';
+  }
+
+  function renderHome(){
+    var demoNote = DB.mode === "demo" ? '<div class="card" style="border-color:var(--warn); background:var(--warn-soft); color:var(--warn); font-size:12.5px; font-weight:600;">Running in demo mode on this device only. Connect a Firebase database from the boss menu so every phone shares the same log.</div>' : "";
+    return '' +
+    demoNote +
+    '<div class="section-title"><h2 class="eyebrow">Start of shift, in order</h2></div>' +
+    '<div class="tiles">' +
+      tile("time","in","clockIn","Time–In","Clock on") +
+      tile("cash","in","cashIn","Cash–In","Count the float") +
+      tile("stock","in","scaleIn","Stock–In","Weigh everything") +
+    '</div>' +
+    '<div class="section-title"><h2 class="eyebrow">End of shift, in order</h2></div>' +
+    '<div class="tiles">' +
+      tile("stock","out","scaleOut","Stock–Out","Weigh it again") +
+      tile("cash","out","cashOut","Cash–Out","Count the till") +
+      tile("time","out","clockOut","Time–Out","Clock off") +
+    '</div>' +
+    (state.employee.isAdmin ? '<div class="section-title"><h2 class="eyebrow">Boss</h2></div><div class="tiles"><button class="tile time" data-go="admin"><div class="glyph">'+svgIcon("admin")+'</div><div><div class="lbl">Manage</div><div class="sub">Flavours, thresholds, staff, log</div></div></button></div>' : '');
+  }
+
+  function tile(kind, dir, icon, label, sub){
+    return '<button class="tile '+kind+(dir==="out"?" out":"")+'" data-go="'+kind+'" data-dir="'+dir+'">' +
+      '<div class="glyph">'+svgIcon(icon)+'</div>' +
+      '<div><div class="lbl">'+label+'</div><div class="sub">'+sub+'</div></div>' +
+    '</button>';
+  }
+
+  function backRow(label){
+    return '<div class="backrow"><button id="btn-back">'+svgIcon("back")+' '+label+'</button></div>';
+  }
+
+  /* ---- Time ---- */
+  function renderTime(dir){
+    var isIn = dir === "in";
+    var todaysEvents = state.events.filter(function(e){ return e.employeeId===state.employee.id && e.type==="time" && todayKey(e.createdAt)===todayKey(); });
+    var already = todaysEvents.some(function(e){ return e.dir===dir; });
+    return backRow("Home") +
+    '<div class="card">' +
+      '<div class="eyebrow">'+(isIn?"Time-In":"Time-Out")+'</div>' +
+      '<h1 style="font-size:19px;margin-top:6px;">'+(isIn?"Clock on shift":"Clock off shift")+'</h1>' +
+      '<p class="muted" style="font-size:13.5px;margin-top:8px;">'+escapeHtml(state.employee.name)+', this logs the exact time right now.</p>' +
+      '<div class="card" style="background:var(--surface-2); margin-top:14px; text-align:center; padding:20px;">' +
+        '<div class="tabular" style="font-family:\'Oswald\'; font-size:34px; font-weight:600;" id="live-clock">'+fmtTime(Date.now())+'</div>' +
+      '</div>' +
+      (already ? '<p class="muted" style="font-size:12.5px;margin-top:10px;">Already logged '+(isIn?"in":"out")+' today at '+fmtTime(todaysEvents.filter(function(e){return e.dir===dir;})[0].createdAt)+'. You can log it again if this is a correction.</p>' : '') +
+      '<button class="btn btn-primary" style="width:100%;margin-top:16px;" id="btn-submit-time">Confirm '+(isIn?"time-in":"time-out")+'</button>' +
+    '</div>';
+  }
+
+  /* ---- Stock ---- */
+  function renderStock(dir){
+    var isIn = dir === "in";
+    var fls = state.flavours;
+    if(!fls.length){
+      return backRow("Home") + '<div class="card empty">No biltong flavours set up yet. Ask the boss to add them under Manage.</div>';
+    }
+    var rows = fls.map(function(f){
+      var suggested = isIn ? (f.lastStockG||0) : "";
+      return '<div class="weigh-row" data-flavour="'+f.id+'">' +
+        '<div class="name">'+escapeHtml(f.name)+'<span class="thr">threshold '+f.thresholdG+' g'+(isIn?(' Â· last close '+(f.lastStockG||0)+' g'):'')+'</span></div>' +
+        '<input type="number" inputmode="decimal" class="tabular weigh-input" placeholder="0" value="'+suggested+'">' +
+        '<div class="unit">g</div>' +
+      '</div>';
+    }).join("");
+    return backRow("Home") +
+    '<div class="card">' +
+      '<div class="eyebrow">'+(isIn?"Stock-In":"Stock-Out")+'</div>' +
+      '<h1 style="font-size:19px;margin-top:6px;">'+(isIn?"Weigh in every flavour":"Weigh out every flavour")+'</h1>' +
+      '<p class="muted" style="font-size:13px;margin-top:6px;">Enter the scale reading in grams for each one. '+(isIn?"This becomes today’s opening stock.":"This is compared against the low-stock thresholds.")+'</p>' +
+    '</div>' +
+    '<div class="card" style="padding-block:4px;">' + rows + '</div>' +
+    '<button class="btn btn-primary" style="width:100%;" id="btn-submit-stock" data-dir="'+dir+'">Save '+(isIn?"stock-in":"stock-out")+'</button>';
+  }
+
+  /* ---- Cash ---- */
+  function renderCash(dir){
+    var isIn = dir === "in";
+    return backRow("Home") +
+    '<div class="card">' +
+      '<div class="eyebrow">'+(isIn?"Cash-In":"Cash-Out")+'</div>' +
+      '<h1 style="font-size:19px;margin-top:6px;">'+(isIn?"Count the starting float":"Count the till, exact amount")+'</h1>' +
+      '<p class="muted" style="font-size:13px;margin-top:6px;">'+(isIn?"How much cash are you starting the day with?":"Count every note and coin in the till. Enter the exact total.")+'</p>' +
+      '<div class="field" style="margin-top:14px;">' +
+        '<label for="cash-amount">Amount ($)</label>' +
+        '<input type="number" inputmode="decimal" step="0.01" id="cash-amount" placeholder="0.00">' +
+      '</div>' +
+      '<button class="btn btn-primary" style="width:100%;margin-top:14px;" id="btn-submit-cash" data-dir="'+dir+'">Save '+(isIn?"cash-in":"cash-out")+'</button>' +
+    '</div>';
+  }
+
+  /* ---- Admin home ---- */
+  function renderAdmin(){
+    var low = lowStockList();
+    return backRow("Home") +
+    '<h1 style="font-size:20px;">Manage the shop</h1>' +
+    '<div class="tiles">' +
+      '<button class="tile time" data-go="admin-flavours"><div class="glyph">'+svgIcon("scaleIn")+'</div><div><div class="lbl">Flavours</div><div class="sub">'+state.flavours.length+' set up'+(low.length?' Â· '+low.length+' low':'')+'</div></div></button>' +
+      '<button class="tile time" data-go="admin-employees"><div class="glyph">'+svgIcon("admin")+'</div><div><div class="lbl">Staff</div><div class="sub">'+state.employees.length+' PINs</div></div></button>' +
+      '<button class="tile time" data-go="admin-log"><div class="glyph">'+svgIcon("clockIn")+'</div><div><div class="lbl">Activity log</div><div class="sub">All check-ins</div></div></button>' +
+      '<button class="tile time" data-go="admin-connect"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Database</div><div class="sub">'+(DB.isCloud()?"Connected":"Demo mode")+'</div></div></button>' +
+    '</div>';
+  }
+
+  function renderAdminFlavours(){
+    var rows = state.flavours.map(function(f){
+      var low = (f.lastStockG||0) <= (f.thresholdG||0);
+      return '<div class="list-row">' +
+        '<span class="swatch" style="background:'+(low?"var(--bad)":"var(--good)")+'"></span>' +
+        '<div class="main"><div class="t">'+escapeHtml(f.name)+'</div><div class="s">last close '+(f.lastStockG||0)+' g Â· threshold '+f.thresholdG+' g</div></div>' +
+        (low?'<span class="pill low">Low</span>':'') +
+        '<button class="iconbtn" data-edit-flavour="'+f.id+'">Edit</button>' +
+      '</div>';
+    }).join("") || '<div class="empty">No flavours yet. Add your first one.</div>';
+    return backRow("Manage") +
+    '<h1 style="font-size:20px;">Flavours</h1>' +
+    '<div class="card" style="padding-block:4px;">'+rows+'</div>' +
+    '<button class="btn btn-primary" style="width:100%;" id="btn-add-flavour">Add a flavour</button>';
+  }
+
+  function renderFlavourEdit(id){
+    var f = id ? state.flavours.find(function(x){return x.id===id;}) : null;
+    var isNew = !f;
+    f = f || { id:"", name:"", thresholdG:1000, lastStockG:0 };
+    return backRow("Flavours") +
+    '<h1 style="font-size:20px;">'+(isNew?"Add flavour":"Edit flavour")+'</h1>' +
+    '<div class="card">' +
+      '<div class="field"><label>Flavour name</label><input id="fl-name" value="'+escapeAttr(f.name)+'" placeholder="e.g. Traditional"></div>' +
+      '<div class="field" style="margin-top:12px;"><label>Low-stock threshold (g)</label><input id="fl-threshold" type="number" inputmode="numeric" value="'+f.thresholdG+'"></div>' +
+      '<div class="field" style="margin-top:12px;"><label>Current known stock (g)</label><input id="fl-stock" type="number" inputmode="numeric" value="'+(f.lastStockG||0)+'"></div>' +
+      '<div class="btnrow" style="margin-top:16px;">' +
+        '<button class="btn btn-primary" style="flex:1;" id="btn-save-flavour" data-id="'+f.id+'">Save</button>' +
+        (isNew ? '' : '<button class="btn btn-danger" id="btn-delete-flavour" data-id="'+f.id+'">Remove</button>') +
+      '</div>' +
+    '</div>';
+  }
+
+  function renderAdminEmployees(){
+    var rows = state.employees.map(function(e){
+      return '<div class="list-row">' +
+        '<div class="main"><div class="t">'+escapeHtml(e.name)+(e.isAdmin?' <span class="tag">boss</span>':'')+'</div><div class="s">PIN '+e.pin+'</div></div>' +
+        '<button class="iconbtn" data-edit-employee="'+e.id+'">Edit</button>' +
+      '</div>';
+    }).join("") || '<div class="empty">No staff yet.</div>';
+    return backRow("Manage") +
+    '<h1 style="font-size:20px;">Staff PINs</h1>' +
+    '<div class="card" style="padding-block:4px;">'+rows+'</div>' +
+    '<button class="btn btn-primary" style="width:100%;" id="btn-add-employee">Add staff member</button>';
+  }
+
+  function renderEmployeeEdit(id){
+    var e = id ? state.employees.find(function(x){return x.id===id;}) : null;
+    var isNew = !e;
+    e = e || { id:"", name:"", pin:"", isAdmin:false };
+    return backRow("Staff") +
+    '<h1 style="font-size:20px;">'+(isNew?"Add staff member":"Edit staff member")+'</h1>' +
+    '<div class="card">' +
+      '<div class="field"><label>Name</label><input id="emp-name" value="'+escapeAttr(e.name)+'" placeholder="First name"></div>' +
+      '<div class="field" style="margin-top:12px;"><label>4-digit PIN</label><input id="emp-pin" inputmode="numeric" maxlength="4" value="'+escapeAttr(e.pin)+'" placeholder="1234"></div>' +
+      '<label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13.5px;font-weight:600;"><input type="checkbox" id="emp-admin" '+(e.isAdmin?"checked":"")+' style="width:auto;"> Boss access (manage flavours, staff, thresholds)</label>' +
+      '<div class="btnrow" style="margin-top:16px;">' +
+        '<button class="btn btn-primary" style="flex:1;" id="btn-save-employee" data-id="'+e.id+'">Save</button>' +
+        (isNew ? '' : '<button class="btn btn-danger" id="btn-delete-employee" data-id="'+e.id+'">Remove</button>') +
+      '</div>' +
+    '</div>';
+  }
+
+  function renderAdminLog(){
+    var evs = state.events.slice(0, 100);
+    var rows = evs.map(function(e){
+      var label = "", detail = "", color = "var(--text-dim)";
+      if(e.type === "time"){ label = "Time-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName; color = e.dir==="in" ? "var(--good)" : "var(--bad)"; }
+      if(e.type === "cash"){ label = "Cash-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + " Â· " + fmtMoney(e.amount||0); color = "var(--good)"; }
+      if(e.type === "stock"){
+        var low = (e.flagged||[]).length;
+        label = "Stock-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + (low ? " Â· "+low+" low" : "");
+        color = low ? "var(--bad)" : "var(--accent)";
+      }
+      return '<div class="list-row">' +
+        '<span class="swatch" style="background:'+color+'"></span>' +
+        '<div class="main"><div class="t">'+label+'</div><div class="s">'+escapeHtml(detail)+'</div></div>' +
+        '<div class="s tabular">'+fmtDateTime(e.createdAt)+'</div>' +
+      '</div>';
+    }).join("") || '<div class="empty">Nothing logged yet.</div>';
+    return backRow("Manage") +
+    '<h1 style="font-size:20px;">Activity log</h1>' +
+    '<p class="muted" style="font-size:12.5px;margin-top:-6px;">Every entry here is permanent once captured. Nobody, including you, can edit or delete one from the app — if something was mis-entered, log a correcting entry.</p>' +
+    '<div class="card" style="padding-block:4px;">'+rows+'</div>';
+  }
+
+  function renderAdminConnect(){
+    var cfgRaw = "";
+    try{ cfgRaw = localStorage.getItem(LS_CONFIG) || ""; }catch(e){}
+    return backRow("Manage") +
+    '<h1 style="font-size:20px;">Shared database</h1>' +
+    '<div class="card">' +
+      '<p style="font-size:13.5px;">Right now this device is '+(DB.isCloud() ? '<b style="color:var(--good);">connected to your shared Firebase database.</b>' : '<b style="color:var(--warn);">only saving to demo storage on this device</b> — other phones won’t see the same stock, cash or staff.') +'</p>' +
+      '<p class="muted" style="font-size:12.5px;margin-top:8px;">To share data across every phone at the pop-up: create a free Firebase project, turn on Firestore, then paste the web app config below. Every device only needs to do this once. Also paste the security rules Claude gave you into Firestore → Rules — they’re what actually stops a checked-in/out record from ever being edited or deleted, on this device or any other.</p>' +
+      '<div class="field" style="margin-top:12px;"><label>Firebase config (paste the whole object)</label><textarea id="fb-config" placeholder=\'{"apiKey":"...","projectId":"...","...":"..."}\'>'+escapeHtml(cfgRaw)+'</textarea></div>' +
+      '<div class="btnrow" style="margin-top:12px;">' +
+        '<button class="btn btn-primary" style="flex:1;" id="btn-save-config">Save & connect</button>' +
+        (DB.isCloud() ? '<button class="btn btn-ghost" id="btn-clear-config">Use demo instead</button>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
+  /* ============================= HELPERS ============================== */
+  function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function escapeAttr(s){ return escapeHtml(s); }
+
+  /* ============================= LOGIN ============================== */
+
+  function renderLoading(){
+    return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text-dim);font-size:13.5px;">' +
+      '<div class="mark" style="width:44px;height:44px;border-radius:13px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Oswald;font-weight:700;font-size:20px;">B</div>' +
+      '<div>Loading…</div>' +
+    '</div>';
+  }
+
+  function renderBootError(err){
+    var msg = (err && err.message) || String(err);
+    var isPerm = /permission/i.test(msg);
+    var isTimeout = err && err.isTimeout;
+    return '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;padding-block:20px;">' +
+      '<div class="login-hero"><div class="mark" style="background:var(--bad);">!</div><h1>Can’t reach the database</h1></div>' +
+      '<div class="card">' +
+        (isTimeout ?
+          '<p style="font-size:13.5px;">The database never responded. If you’re opening this from a Claude-hosted preview link, that’s expected — this preview’s sandbox blocks the live network connections Firestore needs. It will work once this page is hosted on a normal website (GitHub Pages, Firebase Hosting, Netlify, etc.) instead of opened as a Claude artifact link.</p>' +
+          '<p class="muted" style="font-size:12.5px;margin-top:8px;">If you’ve already hosted it elsewhere and still see this, double-check your Firestore rules are published and your device has internet access.</p>'
+        : isPerm ?
+          '<p style="font-size:13.5px;">Firestore is blocking every request. This almost always means the security rules haven’t been published yet — a brand new Firestore project denies everything until you paste in rules.</p>' +
+          '<p class="muted" style="font-size:12.5px;margin-top:8px;">In the Firebase console: Firestore Database → Rules tab → paste the rules Claude gave you → Publish. Then reload this app.</p>'
+          :
+          '<p style="font-size:13.5px;">Something went wrong talking to Firestore.</p><p class="muted" style="font-size:12px;margin-top:8px;word-break:break-word;">'+escapeHtml(msg)+'</p>'
+        ) +
+        '<button class="btn btn-ghost" style="width:100%;margin-top:14px;" id="btn-retry-boot">Try again</button>' +
+        '<button class="btn btn-danger" style="width:100%;margin-top:10px;" id="btn-revert-demo">Switch back to demo mode</button>' +
+      '</div>' +
+    '</div>';
+  }
+  function bindBootError(){
+    var retry = document.getElementById("btn-retry-boot");
+    if(retry) retry.addEventListener("click", function(){ location.reload(); });
+    var revert = document.getElementById("btn-revert-demo");
+    if(revert) revert.addEventListener("click", function(){ DB.clearCloudConfig(); location.reload(); });
+  }
+
+  function renderLogin(){
+    var dots = "";
+    for(var i=0;i<4;i++){
+      var cls = "pin-dot" + (i < state.pin.length ? " filled" : "") + (state.pinError ? " err" : "");
+      dots += '<div class="'+cls+'"></div>';
+    }
+    var keys = [1,2,3,4,5,6,7,8,9,"",0,"del"];
+    var keypad = keys.map(function(k){
+      if(k === ""){ return '<div></div>'; }
+      if(k === "del"){ return '<button class="key ghost" id="key-del">delete</button>'; }
+      return '<button class="key" data-key="'+k+'">'+k+'</button>';
+    }).join("");
+    return '' +
+    '<div id="screen-login">' +
+      '<div class="login-hero">' +
+        '<div class="mark">B</div>' +
+        '<h1>Biltong Floor Log</h1>' +
+        '<p>Enter your 4-digit PIN to clock on</p>' +
+      '</div>' +
+      '<div>' +
+        '<div class="pin-display">'+dots+'</div>' +
+        '<div class="login-err">'+(state.pinError||"&nbsp;")+'</div>' +
+      '</div>' +
+      '<div class="keypad">'+keypad+'</div>' +
+    '</div>';
+  }
+
+  function bindLogin(){
+    document.querySelectorAll("[data-key]").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        if(state.pin.length >= 4) return;
+        state.pin += btn.getAttribute("data-key");
+        state.pinError = "";
+        if(state.pin.length === 4) tryLogin();
+        else render();
+      });
+    });
+    var del = document.getElementById("key-del");
+    if(del) del.addEventListener("click", function(){
+      state.pin = state.pin.slice(0,-1);
+      state.pinError = "";
+      render();
+    });
+  }
+
+  function tryLogin(){
+    render();
+    setTimeout(function(){
+      var emp = state.employees.find(function(e){ return e.pin === state.pin; });
+      if(emp){
+        state.employee = emp;
+        state.pin = "";
+        state.pinError = "";
+        try{ localStorage.setItem(LS_SESSION, emp.id); }catch(e){}
+        go("home");
+      }else{
+        state.pinError = "PIN not recognised";
+        state.pin = "";
+        render();
+      }
+    }, 120);
+  }
+
+  /* ============================= SCREEN BINDINGS ============================== */
+
+  function bindScreen(){
+    var back = document.getElementById("btn-back");
+    if(back) back.addEventListener("click", function(){ go(state.screen.indexOf("admin-")===0 ? "admin" : "home"); });
+
+    var logout = document.getElementById("btn-logout");
+    if(logout) logout.addEventListener("click", function(){
+      state.employee = null; state.pin = "";
+      try{ localStorage.removeItem(LS_SESSION); }catch(e){}
+      go("login");
+    });
+
+    document.querySelectorAll("[data-go]").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        go(btn.getAttribute("data-go"), { dir: btn.getAttribute("data-dir") });
+      });
+    });
+
+    // Time
+    var clockEl = document.getElementById("live-clock");
+    if(clockEl){
+      clearInterval(bindScreen._clockTimer);
+      bindScreen._clockTimer = setInterval(function(){ clockEl.textContent = fmtTime(Date.now()); }, 1000);
+    }
+    var subT = document.getElementById("btn-submit-time");
+    if(subT) subT.addEventListener("click", function(){
+      var dir = state.formData.dir;
+      DB.logEvent({ type:"time", dir:dir, employeeId:state.employee.id, employeeName:state.employee.name }).then(function(){
+        toast("Time-"+(dir==="in"?"in":"out")+" logged at "+fmtTime(Date.now()));
+        refreshEvents().then(function(){ go("home"); });
+      });
+    });
+
+    // Stock
+    var subS = document.getElementById("btn-submit-stock");
+    if(subS) subS.addEventListener("click", function(){
+      var dir = subS.getAttribute("data-dir");
+      var rows = document.querySelectorAll(".weigh-row");
+      var readings = {}; var flagged = []; var ok = true;
+      rows.forEach(function(row){
+        var id = row.getAttribute("data-flavour");
+        var val = parseFloat(row.querySelector(".weigh-input").value);
+        if(isNaN(val)){ ok = false; row.querySelector(".weigh-input").style.borderColor = "var(--bad)"; return; }
+        readings[id] = val;
+      });
+      if(!ok){ toast("Enter a weight for every flavour"); return; }
+      var updates = state.flavours.map(function(f){
+        var w = readings[f.id];
+        if(dir === "out" && w <= f.thresholdG) flagged.push(f.name);
+        return DB.updateStockReading(f.id, w);
+      });
+      Promise.all(updates).then(function(){
+        return DB.logEvent({ type:"stock", dir:dir, employeeId:state.employee.id, employeeName:state.employee.name, readings:readings, flagged:flagged });
+      }).then(function(){
+        if(flagged.length){ toast("Saved. Low stock: "+flagged.join(", ")); }
+        else{ toast("Stock-"+dir+" saved"); }
+        return refreshAll();
+      }).then(function(){ go("home"); });
+    });
+
+    // Cash
+    var subC = document.getElementById("btn-submit-cash");
+    if(subC) subC.addEventListener("click", function(){
+      var dir = subC.getAttribute("data-dir");
+      var amt = parseFloat(document.getElementById("cash-amount").value);
+      if(isNaN(amt) || amt < 0){ toast("Enter the amount"); return; }
+      DB.logEvent({ type:"cash", dir:dir, employeeId:state.employee.id, employeeName:state.employee.name, amount:amt }).then(function(){
+        toast("Cash-"+dir+" saved: "+fmtMoney(amt));
+        return refreshEvents();
+      }).then(function(){ go("home"); });
+    });
+
+    // Admin: flavours
+    var addFl = document.getElementById("btn-add-flavour");
+    if(addFl) addFl.addEventListener("click", function(){ go("admin-flavour-edit", {id:null}); });
+    document.querySelectorAll("[data-edit-flavour]").forEach(function(btn){
+      btn.addEventListener("click", function(){ go("admin-flavour-edit", {id: btn.getAttribute("data-edit-flavour")}); });
+    });
+    var saveFl = document.getElementById("btn-save-flavour");
+    if(saveFl) saveFl.addEventListener("click", function(){
+      var id = saveFl.getAttribute("data-id") || uid();
+      var name = document.getElementById("fl-name").value.trim();
+      var threshold = parseFloat(document.getElementById("fl-threshold").value) || 0;
+      var stock = parseFloat(document.getElementById("fl-stock").value) || 0;
+      if(!name){ toast("Give it a name"); return; }
+      DB.saveFlavour({ id:id, name:name, thresholdG:threshold, lastStockG:stock, lastStockAt:Date.now() }).then(function(){
+        toast("Saved");
+        return refreshAll();
+      }).then(function(){ go("admin-flavours"); });
+    });
+    var delFl = document.getElementById("btn-delete-flavour");
+    if(delFl) delFl.addEventListener("click", function(){
+      DB.deleteFlavour(delFl.getAttribute("data-id")).then(refreshAll).then(function(){ go("admin-flavours"); });
+    });
+
+    // Admin: employees
+    var addEmp = document.getElementById("btn-add-employee");
+    if(addEmp) addEmp.addEventListener("click", function(){ go("admin-employee-edit", {id:null}); });
+    document.querySelectorAll("[data-edit-employee]").forEach(function(btn){
+      btn.addEventListener("click", function(){ go("admin-employee-edit", {id: btn.getAttribute("data-edit-employee")}); });
+    });
+    var saveEmp = document.getElementById("btn-save-employee");
+    if(saveEmp) saveEmp.addEventListener("click", function(){
+      var id = saveEmp.getAttribute("data-id") || uid();
+      var name = document.getElementById("emp-name").value.trim();
+      var pin = document.getElementById("emp-pin").value.trim();
+      var isAdmin = document.getElementById("emp-admin").checked;
+      if(!name || !/^\d{4}$/.test(pin)){ toast("Name and a 4-digit PIN are required"); return; }
+      var clash = state.employees.find(function(e){ return e.pin === pin && e.id !== id; });
+      if(clash){ toast("That PIN is already used by "+clash.name); return; }
+      DB.saveEmployee({ id:id, name:name, pin:pin, isAdmin:isAdmin }).then(function(){
+        toast("Saved");
+        return refreshAll();
+      }).then(function(){ go("admin-employees"); });
+    });
+    var delEmp = document.getElementById("btn-delete-employee");
+    if(delEmp) delEmp.addEventListener("click", function(){
+      DB.deleteEmployee(delEmp.getAttribute("data-id")).then(refreshAll).then(function(){ go("admin-employees"); });
+    });
+
+    // Admin: connect
+    var saveCfg = document.getElementById("btn-save-config");
+    if(saveCfg) saveCfg.addEventListener("click", function(){
+      var raw = document.getElementById("fb-config").value.trim();
+      try{
+        var cfg = JSON.parse(raw);
+        if(!cfg.apiKey || !cfg.projectId){ throw new Error("missing fields"); }
+        DB.setCloudConfig(cfg);
+        toast("Connected. Reloading…");
+        setTimeout(function(){ location.reload(); }, 700);
+      }catch(e){
+        toast("That doesn't look like a valid Firebase config");
+      }
+    });
+    var clearCfg = document.getElementById("btn-clear-config");
+    if(clearCfg) clearCfg.addEventListener("click", function(){
+      DB.clearCloudConfig();
+      toast("Switched to demo mode. Reloading…");
+      setTimeout(function(){ location.reload(); }, 700);
+    });
+  }
+
+  /* ============================= LOADING / BOOT ============================== */
+
+  function refreshEvents(){
+    return DB.getEvents(200).then(function(evs){ state.events = evs; });
+  }
+  function refreshAll(){
+    return Promise.all([DB.getEmployees(), DB.getFlavours(), DB.getEvents(200)]).then(function(r){
+      state.employees = r[0]; state.flavours = r[1]; state.events = r[2];
+    });
+  }
+
+  // A freshly-connected Firestore project has no employees yet, which would
+  // otherwise lock everyone out (there's nothing to log in with). Bootstrap
+  // one owner account so the person who just connected can get in and add
+  // real staff/flavours from the Manage menu.
+  function ensureOwnerSeed(){
+    if(!DB.isCloud()) return Promise.resolve();
+    if(state.employees.length > 0) return Promise.resolve();
+    return DB.saveEmployee({ name:"Owner", pin:"9999", isAdmin:true }).then(refreshAll);
+  }
+
+  function boot(initialData){
+    state.loading = true; render();
+    var timedOut = false;
+    var timeoutMs = DB.isCloudConfigured() ? 9000 : 20000;
+    var timer = setTimeout(function(){
+      timedOut = true;
+      var e = new Error("timeout");
+      e.isTimeout = true;
+      state.loading = false;
+      state.bootError = e;
+      render();
+    }, timeoutMs);
+
+    DB.init().then(refreshAll).then(ensureOwnerSeed).then(function(){
+      if(timedOut) return;
+      clearTimeout(timer);
+      state.loading = false;
+      var sessId = null;
+      try{ sessId = localStorage.getItem(LS_SESSION); }catch(e){}
+      if(sessId){
+        var emp = state.employees.find(function(e){ return e.id === sessId; });
+        if(emp) state.employee = emp;
+      }
+      if(initialData && initialData.screen){ state.screen = initialData.screen; }
+      render();
+    }).catch(function(err){
+      if(timedOut) return;
+      clearTimeout(timer);
+      console.error("Boot failed:", err);
+      state.loading = false;
+      state.bootError = err;
+      render();
+    });
+  }
+
+  // Hot-reload friendly boot for the artifact runtime, if present.
+  if(window.claude && window.claude.hot){
+    window.claude.hot.ready ? window.claude.hot.ready(boot) : boot(window.claude.hot.data || {});
+  } else {
+    boot({});
+  }
+})();
+</script>
+
+</body></html>
