@@ -290,6 +290,7 @@
 <!-- Firebase (only loaded/used when the shop configures it) -->
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
 
 <script>
 (function(){
@@ -318,10 +319,40 @@
     measurementId: "G-YF4HQFMSM5"
   };
 
+  // End-of-day email report, sent via EmailJS (a client-side email service -
+  // no server needed). Fill this in once you've signed up at emailjs.com and
+  // it ships with the file just like the Firebase config above, so every
+  // device sends from the same setup. Leave null and reports are skipped.
+  var EMBEDDED_EMAILJS_CONFIG = null;
+  // Example once you have real values:
+  // var EMBEDDED_EMAILJS_CONFIG = {
+  //   serviceId: "service_xxxxxxx",
+  //   templateId: "template_xxxxxxx",
+  //   publicKey: "xxxxxxxxxxxxxxxxxxx",
+  //   toEmail: "you@example.com"
+  // };
+
+  // Cash is counted note-by-note and coin-by-coin rather than as one typed
+  // total, so a miscount is easy to spot and the exact tally is on record.
+  var DENOMINATIONS = [
+    { key:"100", label:"$100", value:100 },
+    { key:"50", label:"$50", value:50 },
+    { key:"20", label:"$20", value:20 },
+    { key:"10", label:"$10", value:10 },
+    { key:"5", label:"$5", value:5 },
+    { key:"2", label:"$2", value:2 },
+    { key:"1", label:"$1", value:1 },
+    { key:"0.50", label:"50c", value:0.5 },
+    { key:"0.20", label:"20c", value:0.2 },
+    { key:"0.10", label:"10c", value:0.1 },
+    { key:"0.05", label:"5c", value:0.05 }
+  ];
+
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
 
   var LS_CONFIG = "biltong_firebase_config";
+  var LS_EMAIL_CONFIG = "biltong_emailjs_config";
   var LS_DEMO = "biltong_demo_db_v1";
   var LS_SESSION = "biltong_session_employee";
   var LS_THEME = "biltong_theme";
@@ -480,6 +511,21 @@
       });
     },
 
+    // Adds to (rather than replaces) a flavour's current stock - used when a
+    // delivery tops stock up mid-shift, as opposed to a check-in/check-out
+    // weigh-in which sets an absolute reading.
+    addStockDelivery: function(id, amountG){
+      if(this.mode === "demo"){
+        var f = this._demo.flavours.find(function(x){ return x.id === id; });
+        if(f){ f.lastStockG = (f.lastStockG||0) + amountG; f.lastStockAt = Date.now(); saveDemo(this._demo); }
+        return Promise.resolve();
+      }
+      return this._fs.collection("flavours").doc(id).update({
+        lastStockG: firebase.firestore.FieldValue.increment(amountG),
+        lastStockAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    },
+
     // Events are an append-only audit log: captured once, never edited or
     // deleted, by staff or the owner, from this app or from Firestore
     // rules. A mistake gets a new correcting entry, not a rewritten one.
@@ -498,7 +544,7 @@
       });
     },
     getEvents: function(limit){
-      limit = limit || 200;
+      limit = limit || 400;
       if(this.mode === "demo") return Promise.resolve(this._demo.events.slice(0, limit));
       return this._fs.collection("events").orderBy("createdAt","desc").limit(limit).get().then(function(snap){
         var out = []; snap.forEach(function(doc){
@@ -516,6 +562,81 @@
     if(typeof ts.toMillis === "function") return ts.toMillis();
     if(typeof ts.seconds === "number") return ts.seconds * 1000;
     return Date.now();
+  }
+
+  /* ============================= EMAIL REPORTS =============================
+     Sent client-side via EmailJS (no server needed, free tier). Uses either
+     the config baked into the file (EMBEDDED_EMAILJS_CONFIG) or a per-device
+     override saved under Manage -> Email Reports, same pattern as Firebase.
+  =========================================================================== */
+  function getEmailConfig(){
+    var cfg = EMBEDDED_EMAILJS_CONFIG;
+    var raw = null;
+    try{ raw = localStorage.getItem(LS_EMAIL_CONFIG); }catch(e){}
+    if(raw){
+      try{ cfg = JSON.parse(raw); }catch(e){}
+    }
+    return (cfg && cfg.serviceId && cfg.templateId && cfg.publicKey && cfg.toEmail) ? cfg : null;
+  }
+
+  function buildDailyReportText(){
+    var day = todayKey();
+    var lines = [];
+    lines.push("Biltong Floor Log - end of day report for " + day);
+    lines.push("");
+    lines.push("STOCK (most recent reading):");
+    state.flavours.forEach(function(f){
+      var low = (f.lastStockG||0) <= (f.thresholdG||0);
+      lines.push("- " + f.name + ": " + (f.lastStockG||0) + " g" + (low ? " (LOW - threshold " + f.thresholdG + " g)" : ""));
+    });
+    lines.push("");
+    lines.push("CASH TODAY:");
+    var todaysCash = state.events.filter(function(e){ return e.type === "cash" && todayKey(new Date(e.createdAt)) === day; });
+    if(todaysCash.length){
+      todaysCash.slice().reverse().forEach(function(e){
+        var bd = formatCashBreakdown(e.breakdown);
+        lines.push("- " + (e.dir==="in"?"Cash-In":"Cash-Out") + " by " + e.employeeName + ": " + fmtMoney(e.amount||0) + " at " + fmtTime(e.createdAt) + (bd ? " [" + bd + "]" : ""));
+      });
+    } else {
+      lines.push("- No cash events logged today.");
+    }
+    lines.push("");
+    lines.push("TIME TODAY:");
+    var todaysTime = state.events.filter(function(e){ return e.type === "time" && todayKey(new Date(e.createdAt)) === day; });
+    if(todaysTime.length){
+      todaysTime.slice().reverse().forEach(function(e){
+        lines.push("- " + e.employeeName + " " + (e.dir==="in"?"clocked in":"clocked out") + " at " + fmtTime(e.createdAt));
+      });
+    } else {
+      lines.push("- No time events logged today.");
+    }
+    var todaysRestock = state.events.filter(function(e){ return e.type === "restock" && todayKey(new Date(e.createdAt)) === day; });
+    if(todaysRestock.length){
+      lines.push("");
+      lines.push("STOCK DELIVERIES TODAY:");
+      todaysRestock.slice().reverse().forEach(function(e){
+        lines.push("- +" + e.amountG + " g " + e.flavourName + " (logged by " + e.employeeName + ")" + (e.note ? " - " + e.note : ""));
+      });
+    }
+    return lines.join("\n");
+  }
+
+  function sendDailyReport(){
+    var cfg = getEmailConfig();
+    if(!cfg) return Promise.resolve();
+    if(typeof emailjs === "undefined"){
+      toast("Saved, but the email service didn't load (check internet)");
+      return Promise.resolve();
+    }
+    var params = {
+      to_email: cfg.toEmail,
+      subject: "Biltong Floor Log - end of day report - " + todayKey(),
+      message: buildDailyReportText()
+    };
+    return emailjs.send(cfg.serviceId, cfg.templateId, params, cfg.publicKey).catch(function(err){
+      console.error("Email report failed:", err);
+      toast("Saved, but the email report didn't send");
+    });
   }
 
   /* ============================= APP STATE =============================== */
@@ -650,6 +771,7 @@
       cashIn: '<rect x="3" y="7" width="18" height="12" rx="2" stroke="'+stroke+'" stroke-width="2" fill="none"/><circle cx="12" cy="13" r="2.6" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M12 4v3M9 4h6" stroke="'+stroke+'" stroke-width="2" stroke-linecap="round"/>',
       cashOut: '<rect x="3" y="7" width="18" height="12" rx="2" stroke="'+stroke+'" stroke-width="2" fill="none"/><circle cx="12" cy="13" r="2.6" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M8 4l4 3 4-3" stroke="'+stroke+'" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
       admin: '<circle cx="12" cy="8" r="3.4" stroke="'+stroke+'" stroke-width="2" fill="none"/><path d="M5 20c1.2-4 4-6 7-6s5.8 2 7 6" stroke="'+stroke+'" stroke-width="2" fill="none" stroke-linecap="round"/>',
+      restock: '<path d="M3 8l9-4 9 4-9 4-9-4z" stroke="'+stroke+'" stroke-width="2" fill="none" stroke-linejoin="round"/><path d="M3 8v8l9 4 9-4V8" stroke="'+stroke+'" stroke-width="2" fill="none" stroke-linejoin="round"/><path d="M12 12v8" stroke="'+stroke+'" stroke-width="2"/>',
       back: '<path d="M14.5 6l-6 6 6 6" stroke="'+stroke+'" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
       logout: '<path d="M9 4H5a1 1 0 00-1 1v14a1 1 0 001 1h4M15 16l4-4-4-4M19 12H9" stroke="'+stroke+'" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
     };
@@ -680,6 +802,9 @@
       case "admin-employee-edit": html += renderEmployeeEdit(s.formData.id); break;
       case "admin-log": html += renderAdminLog(); break;
       case "admin-connect": html += renderAdminConnect(); break;
+      case "admin-stocklog": html += renderStockLog(); break;
+      case "admin-email": html += renderAdminEmail(); break;
+      case "restock": html += renderRestock(); break;
       default: html += renderHome();
     }
     app.innerHTML = html;
@@ -701,6 +826,27 @@
 
   function lowStockList(){
     return state.flavours.filter(function(f){ return (f.lastStockG||0) <= (f.thresholdG||0); });
+  }
+
+  // One closing (stock-out) reading per day, oldest to newest, for trend
+  // tracking. state.events is newest-first, so the first stock-out event
+  // seen for a given day is already that day's latest reading.
+  function getStockOutHistory(flavourId, days){
+    days = days || 10;
+    var byDay = {};
+    state.events.forEach(function(e){
+      if(e.type === "stock" && e.dir === "out" && e.readings && e.readings[flavourId] != null){
+        var day = todayKey(new Date(e.createdAt));
+        if(!byDay[day]) byDay[day] = { day: day, value: e.readings[flavourId], createdAt: e.createdAt };
+      }
+    });
+    var list = Object.keys(byDay).map(function(k){ return byDay[k]; });
+    list.sort(function(a,b){ return a.day < b.day ? -1 : (a.day > b.day ? 1 : 0); });
+    return list.slice(-days);
+  }
+  function getRestockHistory(flavourId, limit){
+    limit = limit || 5;
+    return state.events.filter(function(e){ return e.type === "restock" && e.flavourId === flavourId; }).slice(0, limit);
   }
 
   function renderAlertBanner(){
@@ -726,6 +872,10 @@
       tile("stock","out","scaleOut","Stock-Out","Weigh it again") +
       tile("cash","out","cashOut","Cash-Out","Count the till") +
       tile("time","out","clockOut","Time-Out","Clock off") +
+    '</div>' +
+    '<div class="section-title"><h2 class="eyebrow">During the shift</h2></div>' +
+    '<div class="tiles">' +
+      '<button class="tile time" data-go="restock"><div class="glyph">'+svgIcon("restock")+'</div><div><div class="lbl">Stock Delivery</div><div class="sub">Log new stock arrived</div></div></button>' +
     '</div>' +
     (state.employee.isAdmin ? '<div class="section-title"><h2 class="eyebrow">Boss</h2></div><div class="tiles"><button class="tile time" data-go="admin"><div class="glyph">'+svgIcon("admin")+'</div><div><div class="lbl">Manage</div><div class="sub">Flavours, thresholds, staff, log</div></div></button></div>' : '');
   }
@@ -787,16 +937,57 @@
   /* ---- Cash ---- */
   function renderCash(dir){
     var isIn = dir === "in";
+    var rows = DENOMINATIONS.map(function(d){
+      return '<div class="weigh-row" data-denom="'+d.key+'" data-value="'+d.value+'">' +
+        '<div class="name">'+d.label+'</div>' +
+        '<input type="number" inputmode="numeric" min="0" class="tabular denom-input" placeholder="0" value="">' +
+        '<div class="unit">x</div>' +
+      '</div>';
+    }).join("");
     return backRow("Home") +
     '<div class="card">' +
       '<div class="eyebrow">'+(isIn?"Cash-In":"Cash-Out")+'</div>' +
-      '<h1 style="font-size:19px;margin-top:6px;">'+(isIn?"Count the starting float":"Count the till, exact amount")+'</h1>' +
-      '<p class="muted" style="font-size:13px;margin-top:6px;">'+(isIn?"How much cash are you starting the day with?":"Count every note and coin in the till. Enter the exact total.")+'</p>' +
-      '<div class="field" style="margin-top:14px;">' +
-        '<label for="cash-amount">Amount ($)</label>' +
-        '<input type="number" inputmode="decimal" step="0.01" id="cash-amount" placeholder="0.00">' +
-      '</div>' +
-      '<button class="btn btn-primary" style="width:100%;margin-top:14px;" id="btn-submit-cash" data-dir="'+dir+'">Save '+(isIn?"cash-in":"cash-out")+'</button>' +
+      '<h1 style="font-size:19px;margin-top:6px;">'+(isIn?"Count the starting float":"Count the till, note by note")+'</h1>' +
+      '<p class="muted" style="font-size:13px;margin-top:6px;">Enter how many of each note and coin you count. The total is worked out for you.</p>' +
+    '</div>' +
+    '<div class="card" style="padding-block:4px;">' + rows + '</div>' +
+    '<div class="card" style="text-align:center;padding:18px;">' +
+      '<div class="eyebrow">Total</div>' +
+      '<div class="tabular" id="cash-total" style="font-family:\'Oswald\';font-size:30px;font-weight:600;margin-top:4px;">$0.00</div>' +
+    '</div>' +
+    '<button class="btn btn-primary" style="width:100%;" id="btn-submit-cash" data-dir="'+dir+'">Save '+(isIn?"cash-in":"cash-out")+'</button>';
+  }
+  function computeCashTotal(){
+    var total = 0;
+    document.querySelectorAll(".weigh-row[data-denom]").forEach(function(row){
+      var val = parseFloat(row.getAttribute("data-value")) || 0;
+      var count = parseInt(row.querySelector(".denom-input").value, 10) || 0;
+      total += val * count;
+    });
+    return Math.round(total * 100) / 100;
+  }
+  function formatCashBreakdown(breakdown){
+    if(!breakdown) return "";
+    return DENOMINATIONS.filter(function(d){ return breakdown[d.key]; })
+      .map(function(d){ return breakdown[d.key] + "x" + d.label; }).join(", ");
+  }
+
+  /* ---- Stock delivery (restock) ---- */
+  function renderRestock(){
+    var fls = state.flavours;
+    if(!fls.length){
+      return backRow("Home") + '<div class="card empty">No biltong flavours set up yet. Ask the boss to add them under Manage.</div>';
+    }
+    var options = fls.map(function(f){ return '<option value="'+f.id+'">'+escapeHtml(f.name)+' (currently '+(f.lastStockG||0)+' g)</option>'; }).join("");
+    return backRow("Home") +
+    '<div class="card">' +
+      '<div class="eyebrow">Stock Delivery</div>' +
+      '<h1 style="font-size:19px;margin-top:6px;">Log new stock arriving</h1>' +
+      '<p class="muted" style="font-size:13px;margin-top:6px;">Use this when a delivery tops up a flavour mid-shift. This adds to the current stock - it does not replace it like a Stock-In/Out weigh-in does.</p>' +
+      '<div class="field" style="margin-top:14px;"><label>Flavour</label><select id="restock-flavour">'+options+'</select></div>' +
+      '<div class="field" style="margin-top:12px;"><label>Amount added (g)</label><input type="number" inputmode="decimal" id="restock-amount" placeholder="0"></div>' +
+      '<div class="field" style="margin-top:12px;"><label>Note (optional)</label><input id="restock-note" placeholder="e.g. delivery from supplier"></div>' +
+      '<button class="btn btn-primary" style="width:100%;margin-top:14px;" id="btn-submit-restock">Save delivery</button>' +
     '</div>';
   }
 
@@ -809,6 +1000,8 @@
       '<button class="tile time" data-go="admin-flavours"><div class="glyph">'+svgIcon("scaleIn")+'</div><div><div class="lbl">Flavours</div><div class="sub">'+state.flavours.length+' set up'+(low.length?' - '+low.length+' low':'')+'</div></div></button>' +
       '<button class="tile time" data-go="admin-employees"><div class="glyph">'+svgIcon("admin")+'</div><div><div class="lbl">Staff</div><div class="sub">'+state.employees.length+' PINs</div></div></button>' +
       '<button class="tile time" data-go="admin-log"><div class="glyph">'+svgIcon("clockIn")+'</div><div><div class="lbl">Activity log</div><div class="sub">All check-ins</div></div></button>' +
+      '<button class="tile time" data-go="admin-stocklog"><div class="glyph">'+svgIcon("scaleOut")+'</div><div><div class="lbl">Stock Log</div><div class="sub">Trends & deliveries</div></div></button>' +
+      '<button class="tile time" data-go="admin-email"><div class="glyph">'+svgIcon("cashOut")+'</div><div><div class="lbl">Email Reports</div><div class="sub">'+(getEmailConfig()?"Configured":"Not set up")+'</div></div></button>' +
       '<button class="tile time" data-go="admin-connect"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Database</div><div class="sub">'+(DB.isCloud()?"Connected":"Demo mode")+'</div></div></button>' +
     '</div>';
   }
@@ -881,11 +1074,19 @@
     var rows = evs.map(function(e){
       var label = "", detail = "", color = "var(--text-dim)";
       if(e.type === "time"){ label = "Time-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName; color = e.dir==="in" ? "var(--good)" : "var(--bad)"; }
-      if(e.type === "cash"){ label = "Cash-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + " - " + fmtMoney(e.amount||0); color = "var(--good)"; }
+      if(e.type === "cash"){
+        var bd = formatCashBreakdown(e.breakdown);
+        label = "Cash-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + " - " + fmtMoney(e.amount||0) + (bd ? " (" + bd + ")" : "");
+        color = "var(--good)";
+      }
       if(e.type === "stock"){
         var low = (e.flagged||[]).length;
         label = "Stock-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + (low ? " - "+low+" low" : "");
         color = low ? "var(--bad)" : "var(--accent)";
+      }
+      if(e.type === "restock"){
+        label = "Stock Delivery"; detail = e.employeeName + " - +"+e.amountG+"g "+e.flavourName+(e.note?" ("+e.note+")":"");
+        color = "var(--good)";
       }
       return '<div class="list-row">' +
         '<span class="swatch" style="background:'+color+'"></span>' +
@@ -912,6 +1113,59 @@
         '<button class="btn btn-primary" style="flex:1;" id="btn-save-config">Save override & connect</button>' +
         (cfgRaw ? '<button class="btn btn-ghost" id="btn-clear-config">Remove override</button>' : '') +
       '</div>' +
+    '</div>';
+  }
+
+  function renderStockLog(){
+    var cards = state.flavours.map(function(f){
+      var hist = getStockOutHistory(f.id, 10);
+      var restocks = getRestockHistory(f.id, 5);
+      var max = Math.max(f.thresholdG||0, 1);
+      hist.forEach(function(h){ if(h.value > max) max = h.value; });
+      var trendRows = hist.length ? hist.map(function(h){
+        var pct = Math.max(4, Math.round((h.value/max)*100));
+        var low = h.value <= (f.thresholdG||0);
+        return '<div style="padding-block:6px;border-bottom:1px solid var(--border);">' +
+          '<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-dim);"><span>'+h.day+'</span><span class="tabular">'+h.value+' g</span></div>' +
+          '<div style="background:var(--surface-2);border-radius:6px;height:7px;margin-top:4px;overflow:hidden;">' +
+            '<div style="width:'+pct+'%;height:100%;background:'+(low?"var(--bad)":"var(--accent)")+';"></div>' +
+          '</div>' +
+        '</div>';
+      }).join("") : '<div class="empty" style="padding:12px 0;">No closing counts logged yet.</div>';
+      var restockRows = restocks.length ? restocks.map(function(r){
+        return '<div class="list-row"><div class="main"><div class="t" style="font-size:13px;">+'+r.amountG+' g</div><div class="s">'+escapeHtml(r.employeeName)+(r.note?' - '+escapeHtml(r.note):'')+'</div></div><div class="s tabular">'+fmtDateTime(r.createdAt)+'</div></div>';
+      }).join("") : '<div class="empty" style="padding:10px 0;">No deliveries logged yet.</div>';
+      return '<div class="card" style="margin-top:12px;">' +
+        '<div class="eyebrow">'+escapeHtml(f.name)+'</div>' +
+        '<div class="s muted" style="margin-top:2px;">Current: '+(f.lastStockG||0)+' g - threshold '+f.thresholdG+' g</div>' +
+        '<div style="margin-top:10px;"><div class="s" style="font-weight:700;margin-bottom:2px;">Closing stock, last '+(hist.length||0)+' days</div>'+trendRows+'</div>' +
+        '<div style="margin-top:12px;"><div class="s" style="font-weight:700;margin-bottom:2px;">Recent deliveries</div>'+restockRows+'</div>' +
+      '</div>';
+    }).join("") || '<div class="empty">No flavours yet.</div>';
+    return backRow("Manage") +
+    '<h1 style="font-size:20px;">Stock log</h1>' +
+    '<p class="muted" style="font-size:12.5px;margin-top:-6px;">Closing stock-out counts and stock deliveries, by flavour, based on the last '+state.events.length+' logged events.</p>' +
+    cards;
+  }
+
+  function renderAdminEmail(){
+    var cfgRaw = "";
+    try{ cfgRaw = localStorage.getItem(LS_EMAIL_CONFIG) || ""; }catch(e){}
+    var cfg = getEmailConfig();
+    return backRow("Manage") +
+    '<h1 style="font-size:20px;">Email reports</h1>' +
+    '<div class="card">' +
+      '<p style="font-size:13.5px;">'+(cfg ? '<b style="color:var(--good);">Configured</b> - an end-of-day report is emailed automatically after Cash-Out.' : '<b style="color:var(--warn);">Not set up yet</b> - Cash-Out will not send an email until this is filled in.') +'</p>' +
+      '<p class="muted" style="font-size:12.5px;margin-top:8px;">Free to set up at emailjs.com: connect your email account there, create a template with variables <span class="tag">to_email</span>, <span class="tag">subject</span> and <span class="tag">message</span>, then paste the three IDs it gives you below, along with the address reports should land in.</p>' +
+      '<div class="field" style="margin-top:12px;"><label>Service ID</label><input id="ej-service" value="'+escapeAttr(cfg?cfg.serviceId:"")+'" placeholder="service_xxxxxxx"></div>' +
+      '<div class="field" style="margin-top:12px;"><label>Template ID</label><input id="ej-template" value="'+escapeAttr(cfg?cfg.templateId:"")+'" placeholder="template_xxxxxxx"></div>' +
+      '<div class="field" style="margin-top:12px;"><label>Public key</label><input id="ej-key" value="'+escapeAttr(cfg?cfg.publicKey:"")+'" placeholder="xxxxxxxxxxxxxxxxxxx"></div>' +
+      '<div class="field" style="margin-top:12px;"><label>Send reports to</label><input id="ej-to" type="email" value="'+escapeAttr(cfg?cfg.toEmail:"")+'" placeholder="you@example.com"></div>' +
+      '<div class="btnrow" style="margin-top:14px;">' +
+        '<button class="btn btn-primary" style="flex:1;" id="btn-save-email">Save</button>' +
+        (cfgRaw ? '<button class="btn btn-ghost" id="btn-clear-email">Remove override</button>' : '') +
+      '</div>' +
+      '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" id="btn-test-email">Send test email</button>' +
     '</div>';
   }
 
@@ -1084,15 +1338,76 @@
     });
 
     // Cash
+    var cashTotalEl = document.getElementById("cash-total");
+    if(cashTotalEl){
+      document.querySelectorAll(".denom-input").forEach(function(inp){
+        inp.addEventListener("input", function(){
+          cashTotalEl.textContent = fmtMoney(computeCashTotal());
+        });
+      });
+    }
     var subC = document.getElementById("btn-submit-cash");
     if(subC) subC.addEventListener("click", function(){
       var dir = subC.getAttribute("data-dir");
-      var amt = parseFloat(document.getElementById("cash-amount").value);
-      if(isNaN(amt) || amt < 0){ toast("Enter the amount"); return; }
-      DB.logEvent({ type:"cash", dir:dir, employeeId:state.employee.id, employeeName:state.employee.name, amount:amt }).then(function(){
+      var breakdown = {};
+      document.querySelectorAll(".weigh-row[data-denom]").forEach(function(row){
+        var count = parseInt(row.querySelector(".denom-input").value, 10) || 0;
+        if(count > 0) breakdown[row.getAttribute("data-denom")] = count;
+      });
+      var amt = computeCashTotal();
+      if(amt <= 0){ toast("Enter at least one note or coin"); return; }
+      DB.logEvent({ type:"cash", dir:dir, employeeId:state.employee.id, employeeName:state.employee.name, amount:amt, breakdown:breakdown }).then(function(){
         toast("Cash-"+dir+" saved: "+fmtMoney(amt));
         return refreshEvents();
+      }).then(function(){
+        if(dir === "out"){ sendDailyReport(); }
+        go("home");
+      }).catch(reportSaveError);
+    });
+
+    // Stock delivery (restock)
+    var subR = document.getElementById("btn-submit-restock");
+    if(subR) subR.addEventListener("click", function(){
+      var flavourId = document.getElementById("restock-flavour").value;
+      var amount = parseFloat(document.getElementById("restock-amount").value);
+      var note = document.getElementById("restock-note").value.trim();
+      var f = state.flavours.find(function(x){ return x.id === flavourId; });
+      if(!f || isNaN(amount) || amount <= 0){ toast("Pick a flavour and enter an amount"); return; }
+      DB.addStockDelivery(f.id, amount).then(function(){
+        return DB.logEvent({ type:"restock", employeeId:state.employee.id, employeeName:state.employee.name, flavourId:f.id, flavourName:f.name, amountG:amount, note:note });
+      }).then(function(){
+        toast("Logged +"+amount+"g delivery for "+f.name);
+        return refreshAll();
       }).then(function(){ go("home"); }).catch(reportSaveError);
+    });
+
+    // Admin: email reports
+    var saveEj = document.getElementById("btn-save-email");
+    if(saveEj) saveEj.addEventListener("click", function(){
+      var cfg = {
+        serviceId: document.getElementById("ej-service").value.trim(),
+        templateId: document.getElementById("ej-template").value.trim(),
+        publicKey: document.getElementById("ej-key").value.trim(),
+        toEmail: document.getElementById("ej-to").value.trim()
+      };
+      if(!cfg.serviceId || !cfg.templateId || !cfg.publicKey || !cfg.toEmail){ toast("Fill in all four fields"); return; }
+      try{ localStorage.setItem(LS_EMAIL_CONFIG, JSON.stringify(cfg)); }catch(e){}
+      toast("Saved");
+      render();
+    });
+    var clearEj = document.getElementById("btn-clear-email");
+    if(clearEj) clearEj.addEventListener("click", function(){
+      try{ localStorage.removeItem(LS_EMAIL_CONFIG); }catch(e){}
+      toast("Removed. Using the built-in setup, if any.");
+      render();
+    });
+    var testEj = document.getElementById("btn-test-email");
+    if(testEj) testEj.addEventListener("click", function(){
+      var cfg = getEmailConfig();
+      if(!cfg){ toast("Fill in and save the settings above first"); return; }
+      if(typeof emailjs === "undefined"){ toast("EmailJS didn't load - check your internet connection"); return; }
+      toast("Sending test email...");
+      sendDailyReport().then(function(){ toast("Test email sent - check your inbox"); });
     });
 
     // Admin: flavours
@@ -1168,10 +1483,10 @@
   /* ============================= LOADING / BOOT ============================== */
 
   function refreshEvents(){
-    return DB.getEvents(200).then(function(evs){ state.events = evs; });
+    return DB.getEvents(400).then(function(evs){ state.events = evs; });
   }
   function refreshAll(){
-    return Promise.all([DB.getEmployees(), DB.getFlavours(), DB.getEvents(200)]).then(function(r){
+    return Promise.all([DB.getEmployees(), DB.getFlavours(), DB.getEvents(400)]).then(function(r){
       state.employees = r[0]; state.flavours = r[1]; state.events = r[2];
     });
   }
