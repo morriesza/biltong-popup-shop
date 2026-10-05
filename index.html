@@ -320,17 +320,16 @@
   };
 
   // End-of-day email report, sent via EmailJS (a client-side email service -
-  // no server needed). Fill this in once you've signed up at emailjs.com and
-  // it ships with the file just like the Firebase config above, so every
-  // device sends from the same setup. Leave null and reports are skipped.
-  var EMBEDDED_EMAILJS_CONFIG = null;
-  // Example once you have real values:
-  // var EMBEDDED_EMAILJS_CONFIG = {
-  //   serviceId: "service_xxxxxxx",
-  //   templateId: "template_xxxxxxx",
-  //   publicKey: "xxxxxxxxxxxxxxxxxxx",
-  //   toEmail: "you@example.com"
-  // };
+  // no server needed). It ships with the file just like the Firebase config
+  // above, so every device sends from the same setup. Leave null and reports
+  // are skipped. The repo is public, so the recipient address is NOT stored
+  // here: it is typed straight into the EmailJS template's "To Email" field,
+  // which also stops anyone reusing these IDs to email other people.
+  var EMBEDDED_EMAILJS_CONFIG = {
+    serviceId: "service_u98pame",
+    templateId: "template_u19jdeu",
+    publicKey: "hJ8p0OmkpAHFwX3iM"
+  };
 
   // Cash is counted note-by-note and coin-by-coin rather than as one typed
   // total, so a miscount is easy to spot and the exact tally is on record.
@@ -576,7 +575,7 @@
     if(raw){
       try{ cfg = JSON.parse(raw); }catch(e){}
     }
-    return (cfg && cfg.serviceId && cfg.templateId && cfg.publicKey && cfg.toEmail) ? cfg : null;
+    return (cfg && cfg.serviceId && cfg.templateId && cfg.publicKey) ? cfg : null;
   }
 
   function buildDailyReportText(){
@@ -628,11 +627,17 @@
       toast("Saved, but the email service didn't load (check internet)");
       return Promise.resolve();
     }
+    var subject = "Biltong Floor Log - end of day report - " + todayKey();
+    // title/name suit EmailJS's default "Contact Us" template. to_email is only
+    // sent for a per-device override; the shared setup fixes the recipient in
+    // the template itself.
     var params = {
-      to_email: cfg.toEmail,
-      subject: "Biltong Floor Log - end of day report - " + todayKey(),
+      subject: subject,
+      title: subject,
+      name: "Biltong Floor Log",
       message: buildDailyReportText()
     };
+    if(cfg.toEmail) params.to_email = cfg.toEmail;
     return emailjs.send(cfg.serviceId, cfg.templateId, params, cfg.publicKey).catch(function(err){
       console.error("Email report failed:", err);
       toast("Saved, but the email report didn't send");
@@ -1156,11 +1161,11 @@
     '<h1 style="font-size:20px;">Email reports</h1>' +
     '<div class="card">' +
       '<p style="font-size:13.5px;">'+(cfg ? '<b style="color:var(--good);">Configured</b> - an end-of-day report is emailed automatically after Cash-Out.' : '<b style="color:var(--warn);">Not set up yet</b> - Cash-Out will not send an email until this is filled in.') +'</p>' +
-      '<p class="muted" style="font-size:12.5px;margin-top:8px;">Free to set up at emailjs.com: connect your email account there, create a template with variables <span class="tag">to_email</span>, <span class="tag">subject</span> and <span class="tag">message</span>, then paste the three IDs it gives you below, along with the address reports should land in.</p>' +
+      '<p class="muted" style="font-size:12.5px;margin-top:8px;">Free to set up at emailjs.com: connect your email account there, create a template with variables <span class="tag">subject</span> and <span class="tag">message</span> and type the address reports should land in as its To Email, then paste the three IDs it gives you below. Only fill in Send reports to if the template\'s To Email is <span class="tag">to_email</span>.</p>' +
       '<div class="field" style="margin-top:12px;"><label>Service ID</label><input id="ej-service" value="'+escapeAttr(cfg?cfg.serviceId:"")+'" placeholder="service_xxxxxxx"></div>' +
       '<div class="field" style="margin-top:12px;"><label>Template ID</label><input id="ej-template" value="'+escapeAttr(cfg?cfg.templateId:"")+'" placeholder="template_xxxxxxx"></div>' +
       '<div class="field" style="margin-top:12px;"><label>Public key</label><input id="ej-key" value="'+escapeAttr(cfg?cfg.publicKey:"")+'" placeholder="xxxxxxxxxxxxxxxxxxx"></div>' +
-      '<div class="field" style="margin-top:12px;"><label>Send reports to</label><input id="ej-to" type="email" value="'+escapeAttr(cfg?cfg.toEmail:"")+'" placeholder="you@example.com"></div>' +
+      '<div class="field" style="margin-top:12px;"><label>Send reports to (optional)</label><input id="ej-to" type="email" value="'+escapeAttr(cfg&&cfg.toEmail?cfg.toEmail:"")+'" placeholder="Leave blank to use the template\'s To Email"></div>' +
       '<div class="btnrow" style="margin-top:14px;">' +
         '<button class="btn btn-primary" style="flex:1;" id="btn-save-email">Save</button>' +
         (cfgRaw ? '<button class="btn btn-ghost" id="btn-clear-email">Remove override</button>' : '') +
@@ -1390,7 +1395,7 @@
         publicKey: document.getElementById("ej-key").value.trim(),
         toEmail: document.getElementById("ej-to").value.trim()
       };
-      if(!cfg.serviceId || !cfg.templateId || !cfg.publicKey || !cfg.toEmail){ toast("Fill in all four fields"); return; }
+      if(!cfg.serviceId || !cfg.templateId || !cfg.publicKey){ toast("Fill in the three IDs"); return; }
       try{ localStorage.setItem(LS_EMAIL_CONFIG, JSON.stringify(cfg)); }catch(e){}
       toast("Saved");
       render();
