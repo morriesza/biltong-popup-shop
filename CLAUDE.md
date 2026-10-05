@@ -27,10 +27,13 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 
 ## End-of-day email (EmailJS)
 - Sent after Cash-Out via EmailJS (client-side, free tier 200/month). SDK: `@emailjs/browser@3` from jsDelivr.
-- Config is `EMBEDDED_EMAILJS_CONFIG` in index.html (currently null = no emails) or a per-device override under Manage -> Email Reports.
-  Needs serviceId, templateId, publicKey, toEmail. Template variables: `to_email`, `subject`, `message`.
-- STATUS: the owner has not yet signed up at emailjs.com / provided these IDs. Once provided, bake them into EMBEDDED_EMAILJS_CONFIG
-  (same pattern as Firebase) so every device sends from the same setup.
+- Config is `EMBEDDED_EMAILJS_CONFIG` in index.html (baked in, same pattern as Firebase) or a per-device override under Manage -> Email Reports.
+  Template variables sent: `subject`, `message` (plain text with line breaks), plus `title` and `name` for EmailJS's default template.
+  `to_email` is only sent for a per-device override that sets a recipient.
+- PUBLIC REPO: never commit email addresses, private keys or other personal details. The report recipient is typed directly into the
+  EmailJS template's "To Email" field (not `{{to_email}}`), so the address stays out of the code and nobody can reuse the public
+  IDs to email anyone else. Template content should be `<div style="white-space:pre-wrap">{{message}}</div>` (double braces = escaped)
+  so line breaks show; never use triple braces. The EmailJS private key is never needed by the app.
 
 ## Hard-won rules (do not repeat these mistakes)
 - Keep the file ASCII-only. Earlier, UTF-8 double-encoding produced "A-circumflex" junk characters in the UI.
@@ -42,7 +45,7 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 - Shared config ships with the file. Never require staff to enter database or email details.
 
 ## Open items / ideas
-- Enter EmailJS credentials once the owner has them.
+- Confirm the first real end-of-day email arrives and looks right.
 - Owner was walked through restricting the Firebase API key in Google Cloud Console (HTTP referrer = the GitHub Pages site, API = Firestore only);
   completion not confirmed.
 - Firestore rules currently allow open writes to `flavours` (needed for renames and restock increments); `events` are append-only.
