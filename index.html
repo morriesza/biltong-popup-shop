@@ -331,6 +331,22 @@
     publicKey: "pUmL3B0hCd3u6cW-0"
   };
 
+  // Square sales check. The Square access token is a real secret, so it lives
+  // only in a small Cloudflare Worker (square-worker/worker.js in this repo);
+  // the app just calls that worker's public URL, which returns grams sold per
+  // item and nothing else. Leave null and the stock check is skipped.
+  var EMBEDDED_SQUARE_CONFIG = null;
+  // Example once the worker is set up:
+  // var EMBEDDED_SQUARE_CONFIG = { salesUrl: "https://biltong-square.example.workers.dev" };
+
+  // A flavour is flagged at Stock-Out when the grams that went missing (after
+  // the drying estimate) are more than this many grams AND this percentage of
+  // what Square says was sold - i.e. more than normal taster use - or when
+  // there is more on the scale than expected by more than RECON_OVER_G.
+  var RECON_TOLERANCE_G = 100;
+  var RECON_TOLERANCE_PCT = 15;
+  var RECON_OVER_G = 50;
+
   // Cash is counted note-by-note and coin-by-coin rather than as one typed
   // total, so a miscount is easy to spot and the exact tally is on record.
   var DENOMINATIONS = [
@@ -609,6 +625,21 @@
     } else {
       lines.push("- No time events logged today.");
     }
+    var check = latestStockCheck(day);
+    if(check){
+      lines.push("");
+      lines.push("STOCK CHECK VS SQUARE (" + check.orders + " Square orders):");
+      (check.rows||[]).forEach(function(r){
+        if(r.missingG == null){ lines.push("- " + r.name + ": sold " + fmtG(r.soldG) + " (no Stock-In today to compare)"); return; }
+        lines.push("- " + r.name + ": sold " + fmtG(r.soldG) + ", missing " + fmtG(r.missingG) +
+          " (drying " + (r.dryingG == null ? "not known yet" : "~" + fmtG(r.dryingG)) + ", tasters ~" + fmtG(r.tastersG) +
+          (r.tasterCents != null ? " = " + fmtMoney(r.tasterCents/100) : "") + ")" +
+          (r.flag === "short" ? " CHECK: more missing than usual" : (r.flag === "over" ? " CHECK: more on the scale than expected" : "")));
+      });
+      if((check.unmatched||[]).length){
+        lines.push("- Square items not matched to a flavour: " + check.unmatched.map(function(u){ return u.name + " (" + fmtG(u.grams) + ")"; }).join(", "));
+      }
+    }
     var todaysRestock = state.events.filter(function(e){ return e.type === "restock" && todayKey(new Date(e.createdAt)) === day; });
     if(todaysRestock.length){
       lines.push("");
@@ -643,6 +674,154 @@
       toast("Saved, but the email report didn't send");
     });
   }
+
+  /* ============================= SQUARE STOCK CHECK ========================
+     At Stock-Out the app asks the Square worker how many grams of each item
+     were sold since Stock-In, then for every flavour works out:
+       missing = opening + deliveries - sold in Square - closing
+     Part of that is drying: the overnight drop between a Stock-Out and the
+     next morning's Stock-In has no sales in it, so it gives a drying rate per
+     hour that is applied to the trading day. Whatever is left is tasters
+     (plus any weighing or ringing-up errors). The result is saved as a
+     "sales" event, append-only like every other event.
+  =========================================================================== */
+  function getSquareConfig(){
+    var cfg = EMBEDDED_SQUARE_CONFIG;
+    return (cfg && cfg.salesUrl) ? cfg : null;
+  }
+
+  function squareGet(path){
+    var cfg = getSquareConfig();
+    if(!cfg) return Promise.reject(new Error("Square is not set up"));
+    return fetch(cfg.salesUrl.replace(/\/+$/, "") + path).then(function(res){
+      return res.json().catch(function(){ return {}; }).then(function(json){
+        if(!res.ok || !json.ok) throw new Error(json.error || ("HTTP " + res.status));
+        return json;
+      });
+    });
+  }
+
+  function normName(s){ return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]/g, ""); }
+
+  // A Square item matches a flavour when the flavour name (or its "Square
+  // item name" override) equals the item name, the variation name, or both.
+  function matchFlavour(item){
+    var cands = [item.name, item.variation, (item.name||"") + " " + (item.variation||"")].map(normName).filter(Boolean);
+    return state.flavours.find(function(f){
+      return [normName(f.name), normName(f.squareName)].some(function(k){ return k && cands.indexOf(k) >= 0; });
+    }) || null;
+  }
+
+  function byCreatedAsc(a, b){ return a.createdAt - b.createdAt; }
+
+  // Average fraction of weight lost per hour overnight, from up to the last
+  // 10 nights where a Stock-Out was followed by a Stock-In on a later day.
+  function getDryingRate(flavourId){
+    var evs = state.events.filter(function(e){
+      return (e.type === "stock" && e.readings && e.readings[flavourId] != null) || (e.type === "restock" && e.flavourId === flavourId);
+    }).slice().sort(byCreatedAsc);
+    var rates = []; var lastOut = null; var delivered = 0;
+    evs.forEach(function(e){
+      if(e.type === "restock"){ if(lastOut) delivered += (e.amountG||0); return; }
+      if(e.dir === "out"){ lastOut = e; delivered = 0; return; }
+      if(lastOut && todayKey(new Date(lastOut.createdAt)) !== todayKey(new Date(e.createdAt))){
+        var start = lastOut.readings[flavourId] + delivered;
+        var hours = (e.createdAt - lastOut.createdAt) / 3600000;
+        if(start > 0 && hours >= 4){ rates.push((start - e.readings[flavourId]) / start / hours); }
+      }
+      lastOut = null;
+    });
+    rates = rates.slice(-10);
+    if(!rates.length) return { rate: 0, nights: 0 };
+    var avg = rates.reduce(function(a, b){ return a + b; }, 0) / rates.length;
+    return { rate: Math.max(0, avg), nights: rates.length };
+  }
+
+  function buildStockCheck(outEvt, sales){
+    var day = todayKey(new Date(outEvt.createdAt));
+    // state.events is newest-first, so the first match is the latest Stock-In.
+    var inEvt = state.events.find(function(e){
+      return e.type === "stock" && e.dir === "in" && e.createdAt <= outEvt.createdAt && todayKey(new Date(e.createdAt)) === day;
+    }) || null;
+
+    var soldG = {}; var salesCents = {}; var unmatched = [];
+    (sales.items || []).forEach(function(it){
+      var f = matchFlavour(it);
+      if(!f){ unmatched.push({ name: (it.name||"") + (it.variation ? " - " + it.variation : ""), grams: Math.round(it.grams||0) }); return; }
+      soldG[f.id] = (soldG[f.id]||0) + (it.grams||0);
+      salesCents[f.id] = (salesCents[f.id]||0) + (it.cents||0);
+    });
+
+    var hours = inEvt ? (outEvt.createdAt - inEvt.createdAt) / 3600000 : 0;
+    var rows = state.flavours.map(function(f){
+      var sold = Math.round(soldG[f.id]||0);
+      var close = outEvt.readings ? outEvt.readings[f.id] : null;
+      var open = inEvt && inEvt.readings ? inEvt.readings[f.id] : null;
+      var row = { flavourId: f.id, name: f.name, soldG: sold, salesCents: salesCents[f.id]||0,
+        openG: open == null ? null : open, closeG: close == null ? null : close,
+        deliveredG: 0, missingG: null, dryingG: null, tastersG: null, tasterCents: null, flag: "" };
+      if(open == null || close == null) return row;
+      state.events.forEach(function(e){
+        if(e.type === "restock" && e.flavourId === f.id && e.createdAt > inEvt.createdAt && e.createdAt <= outEvt.createdAt){ row.deliveredG += (e.amountG||0); }
+      });
+      var missing = open + row.deliveredG - sold - close;
+      var dr = getDryingRate(f.id);
+      var drying = Math.max(0, (open + row.deliveredG + close) / 2 * dr.rate * hours);
+      row.missingG = Math.round(missing);
+      row.dryingG = dr.nights ? Math.round(drying) : null;
+      row.tastersG = Math.round(Math.max(0, missing - drying));
+      if(sold > 0 && row.salesCents > 0){ row.tasterCents = Math.round(row.tastersG * row.salesCents / sold); }
+      var unexplained = missing - drying;
+      if(unexplained > Math.max(RECON_TOLERANCE_G, sold * RECON_TOLERANCE_PCT / 100)) row.flag = "short";
+      else if(missing < -RECON_OVER_G) row.flag = "over";
+      return row;
+    });
+
+    return {
+      type: "sales",
+      stockOutId: outEvt.id || null,
+      stockInId: inEvt ? (inEvt.id || null) : null,
+      day: day,
+      fromMs: inEvt ? inEvt.createdAt : null,
+      toMs: outEvt.createdAt,
+      orders: sales.orders || 0,
+      rows: rows,
+      unmatched: unmatched,
+      unweighed: (sales.unweighed || []).map(function(u){ return { name: (u.name||"") + (u.variation ? " - " + u.variation : ""), qty: u.qty||0 }; }),
+      flagged: rows.filter(function(r){ return r.flag; }).map(function(r){ return r.name; })
+    };
+  }
+
+  // Runs the check for a Stock-Out event and logs the result. Resolves to the
+  // saved "sales" event, or null if Square is not set up or could not be read
+  // (the Stock-Out itself is already saved either way).
+  function runStockCheck(outEvt){
+    if(!getSquareConfig() || !outEvt) return Promise.resolve(null);
+    var day = todayKey(new Date(outEvt.createdAt));
+    var inEvt = state.events.find(function(e){
+      return e.type === "stock" && e.dir === "in" && e.createdAt <= outEvt.createdAt && todayKey(new Date(e.createdAt)) === day;
+    });
+    var from = inEvt ? inEvt.createdAt : new Date(new Date(outEvt.createdAt).setHours(0,0,0,0)).getTime();
+    var path = "/sales?from=" + encodeURIComponent(new Date(from).toISOString()) + "&to=" + encodeURIComponent(new Date(outEvt.createdAt).toISOString());
+    return squareGet(path).then(function(sales){
+      var check = buildStockCheck(outEvt, sales);
+      check.employeeId = state.employee.id;
+      check.employeeName = state.employee.name;
+      return DB.logEvent(check);
+    }).then(function(saved){
+      return refreshEvents().then(function(){ return saved; });
+    }).catch(function(err){
+      console.error("Square stock check failed:", err);
+      toast("Stock saved, but Square sales could not be loaded");
+      return null;
+    });
+  }
+
+  function latestStockCheck(day){
+    return state.events.find(function(e){ return e.type === "sales" && e.day === day; }) || null;
+  }
+
+  function fmtG(n){ return n == null ? "-" : (Math.round(n) + " g"); }
 
   /* ============================= APP STATE =============================== */
 
@@ -809,6 +988,8 @@
       case "admin-connect": html += renderAdminConnect(); break;
       case "admin-stocklog": html += renderStockLog(); break;
       case "admin-email": html += renderAdminEmail(); break;
+      case "admin-stockcheck": html += renderAdminStockCheck(); break;
+      case "stockcheck": html += renderStockCheckResult(); break;
       case "restock": html += renderRestock(); break;
       default: html += renderHome();
     }
@@ -1006,6 +1187,7 @@
       '<button class="tile time" data-go="admin-employees"><div class="glyph">'+svgIcon("admin")+'</div><div><div class="lbl">Staff</div><div class="sub">'+state.employees.length+' PINs</div></div></button>' +
       '<button class="tile time" data-go="admin-log"><div class="glyph">'+svgIcon("clockIn")+'</div><div><div class="lbl">Activity log</div><div class="sub">All check-ins</div></div></button>' +
       '<button class="tile time" data-go="admin-stocklog"><div class="glyph">'+svgIcon("scaleOut")+'</div><div><div class="lbl">Stock Log</div><div class="sub">Trends & deliveries</div></div></button>' +
+      '<button class="tile time" data-go="admin-stockcheck"><div class="glyph">'+svgIcon("scaleIn")+'</div><div><div class="lbl">Stock Check</div><div class="sub">'+(getSquareConfig()?"Weigh-ins vs Square sales":"Square not set up")+'</div></div></button>' +
       '<button class="tile time" data-go="admin-email"><div class="glyph">'+svgIcon("cashOut")+'</div><div><div class="lbl">Email Reports</div><div class="sub">'+(getEmailConfig()?"Configured":"Not set up")+'</div></div></button>' +
       '<button class="tile time" data-go="admin-connect"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Database</div><div class="sub">'+(DB.isCloud()?"Connected":"Demo mode")+'</div></div></button>' +
     '</div>';
@@ -1035,6 +1217,7 @@
     '<h1 style="font-size:20px;">'+(isNew?"Add flavour":"Edit flavour")+'</h1>' +
     '<div class="card">' +
       '<div class="field"><label>Flavour name</label><input id="fl-name" value="'+escapeAttr(f.name)+'" placeholder="e.g. Traditional"></div>' +
+      '<div class="field" style="margin-top:12px;"><label>Square item name (only if different)</label><input id="fl-square" value="'+escapeAttr(f.squareName||"")+'" placeholder="Leave blank if Square uses the same name"></div>' +
       '<div class="field" style="margin-top:12px;"><label>Low-stock threshold (g)</label><input id="fl-threshold" type="number" inputmode="numeric" value="'+f.thresholdG+'"></div>' +
       '<div class="field" style="margin-top:12px;"><label>Current known stock (g)</label><input id="fl-stock" type="number" inputmode="numeric" value="'+(f.lastStockG||0)+'"></div>' +
       '<div class="btnrow" style="margin-top:16px;">' +
@@ -1088,6 +1271,11 @@
         var low = (e.flagged||[]).length;
         label = "Stock-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + (low ? " - "+low+" low" : "");
         color = low ? "var(--bad)" : "var(--accent)";
+      }
+      if(e.type === "sales"){
+        var nf = (e.flagged||[]).length;
+        label = "Stock Check"; detail = e.employeeName + " - " + e.orders + " Square orders" + (nf ? " - " + nf + " to check" : "");
+        color = nf ? "var(--bad)" : "var(--good)";
       }
       if(e.type === "restock"){
         label = "Stock Delivery"; detail = e.employeeName + " - +"+e.amountG+"g "+e.flavourName+(e.note?" ("+e.note+")":"");
@@ -1172,6 +1360,92 @@
       '</div>' +
       '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" id="btn-test-email">Send test email</button>' +
     '</div>';
+  }
+
+  /* ---- Stock check vs Square ---- */
+  // Staff see sold grams and which flavours to re-weigh; the boss also sees
+  // missing, drying and taster estimates.
+  function renderCheckRows(check, detailed){
+    return (check.rows||[]).map(function(r){
+      var pill = r.flag === "short" ? '<span class="pill low">Check</span>' : (r.flag === "over" ? '<span class="pill pending">Check</span>' : (r.missingG == null ? '' : '<span class="pill open">OK</span>'));
+      var sub = "Sold in Square " + fmtG(r.soldG);
+      if(r.missingG == null){ sub += " - no Stock-In today to compare"; }
+      else if(detailed){
+        sub += " - opened " + fmtG(r.openG) + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") + ", closed " + fmtG(r.closeG) +
+          "<br>Missing " + fmtG(r.missingG) + ": drying " + (r.dryingG == null ? "not known yet" : "~" + fmtG(r.dryingG)) +
+          ", tasters ~" + fmtG(r.tastersG) + (r.tasterCents != null ? " (" + fmtMoney(r.tasterCents/100) + ")" : "");
+      }
+      if(r.flag === "short") sub += "<br><b style=\"color:var(--bad);\">More missing than usual - re-weigh, and check every sale went through Square.</b>";
+      if(r.flag === "over") sub += "<br><b style=\"color:var(--warn);\">More on the scale than expected - re-weigh, or log a missed delivery.</b>";
+      return '<div class="list-row">' +
+        '<div class="main"><div class="t">'+escapeHtml(r.name)+'</div><div class="s">'+sub+'</div></div>' + pill +
+      '</div>';
+    }).join("");
+  }
+  function renderCheckExtras(check){
+    var out = "";
+    if((check.unmatched||[]).length){
+      out += '<p class="s" style="margin-top:10px;color:var(--warn);">Square items not matched to a flavour: ' + escapeHtml(check.unmatched.map(function(u){ return u.name + " (" + fmtG(u.grams) + ")"; }).join(", ")) + '. Set the Square item name on the flavour under Manage -> Flavours.</p>';
+    }
+    if((check.unweighed||[]).length){
+      out += '<p class="s muted" style="margin-top:6px;">Sold per piece, not by weight (not counted): ' + escapeHtml(check.unweighed.map(function(u){ return u.name + " x" + u.qty; }).join(", ")) + '.</p>';
+    }
+    return out;
+  }
+
+  function renderStockCheckResult(){
+    var check = latestStockCheck(todayKey());
+    if(!check) return backRow("Home") + '<div class="card empty">No stock check for today yet.</div>';
+    var nf = (check.flagged||[]).length;
+    return backRow("Home") +
+    '<div class="card">' +
+      '<div class="eyebrow">Stock check</div>' +
+      '<h1 style="font-size:19px;margin-top:6px;">'+(nf ? nf+' flavour'+(nf>1?'s':'')+' to check' : 'Stock matches Square sales')+'</h1>' +
+      '<p class="muted" style="font-size:13px;margin-top:6px;">Your Stock-Out is saved. It was compared with '+check.orders+' Square orders since Stock-In.'+(nf ? ' If a re-weigh gives a different number, just do Stock-Out again.' : '')+'</p>' +
+    '</div>' +
+    '<div class="card" style="padding-block:4px;">' + renderCheckRows(check, state.employee.isAdmin) + '</div>' +
+    renderCheckExtras(check) +
+    '<button class="btn btn-primary" style="width:100%;margin-top:12px;" data-go="home">Done</button>';
+  }
+
+  function renderAdminStockCheck(){
+    var cfg = getSquareConfig();
+    var byDay = {}; var days = [];
+    state.events.forEach(function(e){
+      if(e.type === "sales" && !byDay[e.day]){ byDay[e.day] = e; days.push(e.day); }
+    });
+    days = days.slice(0, 14);
+    var totals = { sold:0, tasters:0, tasterCents:0, drying:0, flagged:0 };
+    days.slice(0, 7).forEach(function(d){
+      var c = byDay[d];
+      if((c.flagged||[]).length) totals.flagged++;
+      (c.rows||[]).forEach(function(r){
+        totals.sold += r.soldG||0; totals.tasters += r.tastersG||0; totals.drying += r.dryingG||0; totals.tasterCents += r.tasterCents||0;
+      });
+    });
+    var summary = days.length ?
+      '<div class="card">' +
+        '<div class="eyebrow">Last '+Math.min(7, days.length)+' checked days</div>' +
+        '<div class="list-row"><div class="main"><div class="t">Sold (Square)</div></div><div class="tabular">'+fmtG(totals.sold)+'</div></div>' +
+        '<div class="list-row"><div class="main"><div class="t">Tasters (estimate)</div><div class="s">What went missing after drying is taken off</div></div><div class="tabular">'+fmtG(totals.tasters)+(totals.tasterCents ? ' - '+fmtMoney(totals.tasterCents/100) : '')+'</div></div>' +
+        '<div class="list-row"><div class="main"><div class="t">Drying (estimate)</div><div class="s">From the overnight drop between Stock-Out and next Stock-In</div></div><div class="tabular">'+fmtG(totals.drying)+'</div></div>' +
+        '<div class="list-row"><div class="main"><div class="t">Days with a flavour to check</div></div><div class="tabular">'+totals.flagged+'</div></div>' +
+      '</div>' : '';
+    var dayCards = days.map(function(d){
+      var c = byDay[d];
+      return '<div class="card" style="margin-top:12px;">' +
+        '<div class="eyebrow">'+d+' - '+c.orders+' Square orders</div>' +
+        '<div style="padding-block:4px;">'+renderCheckRows(c, true)+'</div>' + renderCheckExtras(c) +
+      '</div>';
+    }).join("") || '<div class="card empty">No stock checks yet. One runs automatically at every Stock-Out once Square is set up.</div>';
+    return backRow("Manage") +
+    '<h1 style="font-size:20px;">Stock check</h1>' +
+    '<div class="card">' +
+      '<p style="font-size:13.5px;">'+(cfg ? '<b style="color:var(--good);">Square is set up</b> - every Stock-Out is compared with Square sales since that day\'s Stock-In.' : '<b style="color:var(--warn);">Square is not set up yet</b> - Stock-Out works as normal without the check.')+'</p>' +
+      '<p class="muted" style="font-size:12.5px;margin-top:8px;">Missing = opening + deliveries - sold in Square - closing. Drying is estimated from the overnight drop, so Stock-In must be a real weigh-in each morning. The rest is counted as tasters. A flavour is flagged when more than '+RECON_TOLERANCE_G+' g and '+RECON_TOLERANCE_PCT+'% of its sales goes missing beyond drying.</p>' +
+      (cfg ? '<div class="btnrow" style="margin-top:12px;"><button class="btn btn-primary" style="flex:1;" id="btn-run-stockcheck">Re-check today</button><button class="btn btn-ghost" id="btn-test-square">Test connection</button></div>' : '') +
+    '</div>' +
+    summary + dayCards;
   }
 
   /* ============================= HELPERS ============================== */
@@ -1333,13 +1607,19 @@
         if(dir === "out" && w <= f.thresholdG) flagged.push(f.name);
         return DB.updateStockReading(f.id, w);
       });
+      var savedEvt = null;
       Promise.all(updates).then(function(){
         return DB.logEvent({ type:"stock", dir:dir, employeeId:state.employee.id, employeeName:state.employee.name, readings:readings, flagged:flagged });
-      }).then(function(){
+      }).then(function(evt){
+        savedEvt = evt;
         if(flagged.length){ toast("Saved. Low stock: "+flagged.join(", ")); }
         else{ toast("Stock-"+dir+" saved"); }
         return refreshAll();
-      }).then(function(){ go("home"); }).catch(reportSaveError);
+      }).then(function(){
+        if(dir !== "out" || !getSquareConfig()) return go("home");
+        toast("Checking against Square sales...");
+        return runStockCheck(savedEvt).then(function(check){ go(check ? "stockcheck" : "home"); });
+      }).catch(reportSaveError);
     });
 
     // Cash
@@ -1386,6 +1666,23 @@
       }).then(function(){ go("home"); }).catch(reportSaveError);
     });
 
+    // Admin: re-run today's stock check against Square
+    var rerun = document.getElementById("btn-run-stockcheck");
+    if(rerun) rerun.addEventListener("click", function(){
+      var day = todayKey();
+      var outEvt = state.events.find(function(e){ return e.type === "stock" && e.dir === "out" && todayKey(new Date(e.createdAt)) === day; });
+      if(!outEvt){ toast("No Stock-Out logged today yet"); return; }
+      toast("Checking against Square sales...");
+      runStockCheck(outEvt).then(function(check){ if(check){ toast("Stock check saved"); } render(); });
+    });
+    var testSq = document.getElementById("btn-test-square");
+    if(testSq) testSq.addEventListener("click", function(){
+      toast("Contacting Square...");
+      squareGet("/status").then(function(j){
+        toast("Square connected: " + ((j.locations||[]).join(", ") || "no active locations"));
+      }).catch(function(err){ toast("Square connection failed: " + err.message); });
+    });
+
     // Admin: email reports
     var saveEj = document.getElementById("btn-save-email");
     if(saveEj) saveEj.addEventListener("click", function(){
@@ -1427,8 +1724,9 @@
       var name = document.getElementById("fl-name").value.trim();
       var threshold = parseFloat(document.getElementById("fl-threshold").value) || 0;
       var stock = parseFloat(document.getElementById("fl-stock").value) || 0;
+      var squareName = document.getElementById("fl-square").value.trim();
       if(!name){ toast("Give it a name"); return; }
-      DB.saveFlavour({ id:id, name:name, thresholdG:threshold, lastStockG:stock, lastStockAt:Date.now() }).then(function(){
+      DB.saveFlavour({ id:id, name:name, squareName:squareName, thresholdG:threshold, lastStockG:stock, lastStockAt:Date.now() }).then(function(){
         toast("Saved");
         return refreshAll();
       }).then(function(){ go("admin-flavours"); }).catch(reportSaveError);
