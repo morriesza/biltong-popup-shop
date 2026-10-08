@@ -382,6 +382,10 @@
   function fmtTime(ts){ var d = new Date(ts); return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}); }
   function fmtDateTime(ts){ var d = new Date(ts); return d.toLocaleDateString([], {day:"2-digit", month:"short"}) + " - " + fmtTime(ts); }
   function fmtMoney(n){ return "$" + (Math.round(n*100)/100).toFixed(2); }
+  // When something happened. A time entry the boss adds afterwards (because
+  // someone forgot to clock on/off) carries the real time in atMs; createdAt
+  // stays the moment it was entered, so the audit trail shows both.
+  function eventTime(e){ return e.atMs || e.createdAt; }
 
   function seedDemo(){
     return {
@@ -660,10 +664,10 @@
     }
     lines.push("");
     lines.push("TIME TODAY:");
-    var todaysTime = state.events.filter(function(e){ return e.type === "time" && todayKey(new Date(e.createdAt)) === day; });
+    var todaysTime = state.events.filter(function(e){ return e.type === "time" && todayKey(new Date(eventTime(e))) === day; });
     if(todaysTime.length){
-      todaysTime.slice().reverse().forEach(function(e){
-        lines.push("- " + e.employeeName + " " + (e.dir==="in"?"clocked in":"clocked out") + " at " + fmtTime(e.createdAt));
+      todaysTime.slice().sort(function(a, b){ return eventTime(a) - eventTime(b); }).forEach(function(e){
+        lines.push("- " + e.employeeName + " " + (e.dir==="in"?"clocked in":"clocked out") + " at " + fmtTime(eventTime(e)) + (e.manual ? " (added by " + e.enteredByName + ")" : ""));
       });
     } else {
       lines.push("- No time events logged today.");
@@ -1035,6 +1039,7 @@
       case "admin-stocklog": html += renderStockLog(); break;
       case "admin-email": html += renderAdminEmail(); break;
       case "admin-stockcheck": html += renderAdminStockCheck(); break;
+      case "admin-hours": html += renderAdminHours(); break;
       case "stockcheck": html += renderStockCheckResult(); break;
       case "restock": html += renderRestock(); break;
       default: html += renderHome();
@@ -1126,7 +1131,7 @@
   /* ---- Time ---- */
   function renderTime(dir){
     var isIn = dir === "in";
-    var todaysEvents = state.events.filter(function(e){ return e.employeeId===state.employee.id && e.type==="time" && todayKey(e.createdAt)===todayKey(); });
+    var todaysEvents = state.events.filter(function(e){ return e.employeeId===state.employee.id && e.type==="time" && todayKey(new Date(eventTime(e)))===todayKey(); });
     var already = todaysEvents.some(function(e){ return e.dir===dir; });
     return backRow("Home") +
     '<div class="card">' +
@@ -1136,7 +1141,7 @@
       '<div class="card" style="background:var(--surface-2); margin-top:14px; text-align:center; padding:20px;">' +
         '<div class="tabular" style="font-family:\'Oswald\'; font-size:34px; font-weight:600;" id="live-clock">'+fmtTime(Date.now())+'</div>' +
       '</div>' +
-      (already ? '<p class="muted" style="font-size:12.5px;margin-top:10px;">Already logged '+(isIn?"in":"out")+' today at '+fmtTime(todaysEvents.filter(function(e){return e.dir===dir;})[0].createdAt)+'. You can log it again if this is a correction.</p>' : '') +
+      (already ? '<p class="muted" style="font-size:12.5px;margin-top:10px;">Already logged '+(isIn?"in":"out")+' today at '+fmtTime(eventTime(todaysEvents.filter(function(e){return e.dir===dir;})[0]))+'. You can log it again if this is a correction.</p>' : '') +
       '<button class="btn btn-primary" style="width:100%;margin-top:16px;" id="btn-submit-time">Confirm '+(isIn?"time-in":"time-out")+'</button>' +
     '</div>';
   }
@@ -1231,6 +1236,7 @@
     '<div class="tiles">' +
       '<button class="tile time" data-go="admin-flavours"><div class="glyph">'+svgIcon("scaleIn")+'</div><div><div class="lbl">Flavours</div><div class="sub">'+state.flavours.length+' set up'+(low.length?' - '+low.length+' low':'')+'</div></div></button>' +
       '<button class="tile time" data-go="admin-employees"><div class="glyph">'+svgIcon("admin")+'</div><div><div class="lbl">Staff</div><div class="sub">'+state.employees.length+' PINs</div></div></button>' +
+      '<button class="tile time" data-go="admin-hours"><div class="glyph">'+svgIcon("clockOut")+'</div><div><div class="lbl">Staff Hours</div><div class="sub">Shifts & missed clock-ons</div></div></button>' +
       '<button class="tile time" data-go="admin-log"><div class="glyph">'+svgIcon("clockIn")+'</div><div><div class="lbl">Activity log</div><div class="sub">All check-ins</div></div></button>' +
       '<button class="tile time" data-go="admin-stocklog"><div class="glyph">'+svgIcon("scaleOut")+'</div><div><div class="lbl">Stock Log</div><div class="sub">Trends & deliveries</div></div></button>' +
       '<button class="tile time" data-go="admin-stockcheck"><div class="glyph">'+svgIcon("scaleIn")+'</div><div><div class="lbl">Stock Check</div><div class="sub">'+(getSquareConfig()?"Weigh-ins vs Square sales":"Square not set up")+'</div></div></button>' +
@@ -1307,7 +1313,10 @@
     var evs = state.events.slice(0, 100);
     var rows = evs.map(function(e){
       var label = "", detail = "", color = "var(--text-dim)";
-      if(e.type === "time"){ label = "Time-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName; color = e.dir==="in" ? "var(--good)" : "var(--bad)"; }
+      if(e.type === "time"){
+        label = "Time-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName; color = e.dir==="in" ? "var(--good)" : "var(--bad)";
+        if(e.manual){ detail += " - " + fmtDateTime(e.atMs) + ", added by " + e.enteredByName + (e.note ? " (" + e.note + ")" : ""); }
+      }
       if(e.type === "cash"){
         var bd = formatCashBreakdown(e.breakdown);
         label = "Cash-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + " - " + fmtMoney(e.amount||0) + (bd ? " (" + bd + ")" : "");
@@ -1406,6 +1415,91 @@
       '</div>' +
       '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" id="btn-test-email">Send test email</button>' +
     '</div>';
+  }
+
+  /* ---- Staff hours ---- */
+  // One shift per person per day. Clock-ons the boss added win over the
+  // staff member's own (the latest one added counts); otherwise the earliest
+  // Time-In and latest Time-Out of the day are used.
+  function getShifts(){
+    var map = {}; var list = [];
+    state.events.forEach(function(e){
+      if(e.type !== "time" || (e.dir !== "in" && e.dir !== "out")) return;
+      var t = eventTime(e);
+      var day = todayKey(new Date(t));
+      var key = day + "|" + e.employeeId;
+      var s = map[key];
+      if(!s){ s = map[key] = { day: day, employeeId: e.employeeId, name: e.employeeName, "in": null, out: null }; list.push(s); }
+      var cand = { t: t, manual: !!e.manual, enteredAt: e.createdAt, by: e.enteredByName || "" };
+      var cur = s[e.dir];
+      var better = !cur ||
+        (cand.manual && !cur.manual) ||
+        (cand.manual && cur.manual && cand.enteredAt > cur.enteredAt) ||
+        (!cand.manual && !cur.manual && (e.dir === "in" ? cand.t < cur.t : cand.t > cur.t));
+      if(better) s[e.dir] = cand;
+    });
+    list.forEach(function(s){
+      s.hours = (s["in"] && s.out && s.out.t > s["in"].t) ? (s.out.t - s["in"].t) / 3600000 : null;
+    });
+    list.sort(function(a, b){ return a.day < b.day ? 1 : (a.day > b.day ? -1 : (a.name < b.name ? -1 : 1)); });
+    return list;
+  }
+  function fmtHours(h){ return h == null ? "-" : (Math.round(h * 4) / 4) + " h"; }
+
+  function renderAdminHours(){
+    var fd = state.formData || {};
+    var staff = state.employees.slice().sort(function(a, b){ return a.name < b.name ? -1 : 1; });
+    var staffOptions = staff.map(function(e){ return '<option value="'+e.id+'"'+(fd.emp===e.id?' selected':'')+'>'+escapeHtml(e.name)+'</option>'; }).join("");
+    var shifts = getShifts();
+    var today = todayKey();
+    var weekAgo = todayKey(new Date(Date.now() - 6 * 86400000));
+
+    var totals = {};
+    shifts.forEach(function(s){
+      if(s.day < weekAgo || s.hours == null) return;
+      totals[s.name] = (totals[s.name] || 0) + s.hours;
+    });
+    var totalRows = Object.keys(totals).sort().map(function(n){
+      return '<div class="list-row"><div class="main"><div class="t">'+escapeHtml(n)+'</div></div><div class="tabular">'+fmtHours(totals[n])+'</div></div>';
+    }).join("") || '<div class="empty" style="padding:10px 0;">No complete shifts in the last 7 days.</div>';
+
+    var days = [];
+    shifts.forEach(function(s){ if(days.indexOf(s.day) < 0) days.push(s.day); });
+    var dayCards = days.slice(0, 14).map(function(day){
+      var rows = shifts.filter(function(s){ return s.day === day; }).map(function(s){
+        var part = function(dir){
+          var v = s[dir];
+          if(!v){
+            if(dir === "out" && day === today) return '<span class="muted">still on</span>';
+            return '<button class="iconbtn" style="color:var(--bad);font-weight:700;" data-fill-emp="'+s.employeeId+'" data-fill-dir="'+dir+'" data-fill-day="'+day+'">Missing - add</button>';
+          }
+          return fmtTime(v.t) + (v.manual ? '<span class="muted" title="Added by '+escapeAttr(v.by)+'">*</span>' : '');
+        };
+        return '<div class="list-row">' +
+          '<div class="main"><div class="t">'+escapeHtml(s.name)+'</div><div class="s">In '+part("in")+' - Out '+part("out")+'</div></div>' +
+          '<div class="tabular">'+fmtHours(s.hours)+'</div>' +
+        '</div>';
+      }).join("");
+      return '<div class="card" style="margin-top:12px;"><div class="eyebrow">'+day+(day===today?' - today':'')+'</div><div style="padding-block:4px;">'+rows+'</div></div>';
+    }).join("") || '<div class="card empty">No time entries yet.</div>';
+
+    return backRow("Manage") +
+    '<h1 style="font-size:20px;">Staff hours</h1>' +
+    '<div class="card" id="add-time-card">' +
+      '<div class="eyebrow">Add a missed clock-on or clock-off</div>' +
+      '<p class="muted" style="font-size:12.5px;margin-top:6px;">For when someone forgot. It is saved as a new entry marked as added by you; their own entries are kept in the Activity log.</p>' +
+      '<div class="field" style="margin-top:12px;"><label>Staff member</label><select id="mt-emp">'+staffOptions+'</select></div>' +
+      '<div class="field" style="margin-top:12px;"><label>Clock</label><select id="mt-dir"><option value="in"'+(fd.dir==="out"?'':' selected')+'>Time-In (start)</option><option value="out"'+(fd.dir==="out"?' selected':'')+'>Time-Out (finish)</option></select></div>' +
+      '<div class="btnrow" style="margin-top:12px;gap:10px;">' +
+        '<div class="field" style="flex:1;"><label>Date</label><input id="mt-day" type="date" value="'+escapeAttr(fd.day || today)+'" max="'+today+'"></div>' +
+        '<div class="field" style="flex:1;"><label>Time</label><input id="mt-time" type="time" value=""></div>' +
+      '</div>' +
+      '<div class="field" style="margin-top:12px;"><label>Reason (optional)</label><input id="mt-note" placeholder="e.g. forgot to clock off"></div>' +
+      '<button class="btn btn-primary" style="width:100%;margin-top:14px;" id="btn-save-manual-time">Save time</button>' +
+    '</div>' +
+    '<div class="card"><div class="eyebrow">Hours, last 7 days</div><div style="padding-block:4px;">'+totalRows+'</div></div>' +
+    '<p class="muted" style="font-size:12px;margin-top:12px;">* = added by the boss. Hours are rounded to the nearest quarter hour.</p>' +
+    dayCards;
   }
 
   /* ---- Stock check vs Square ---- */
@@ -1723,6 +1817,35 @@
         toast("Logged +"+amount+"g delivery for "+f.name);
         return refreshAll();
       }).then(function(){ go("home"); }).catch(reportSaveError);
+    });
+
+    // Admin: staff hours
+    document.querySelectorAll("[data-fill-emp]").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        go("admin-hours", { emp: btn.getAttribute("data-fill-emp"), dir: btn.getAttribute("data-fill-dir"), day: btn.getAttribute("data-fill-day") });
+        var card = document.getElementById("add-time-card");
+        if(card && card.scrollIntoView) card.scrollIntoView({ behavior: "smooth" });
+        var t = document.getElementById("mt-time");
+        if(t && t.focus) t.focus();
+      });
+    });
+    var saveMt = document.getElementById("btn-save-manual-time");
+    if(saveMt) saveMt.addEventListener("click", function(){
+      var emp = state.employees.find(function(e){ return e.id === document.getElementById("mt-emp").value; });
+      var dir = document.getElementById("mt-dir").value;
+      var day = document.getElementById("mt-day").value;
+      var time = document.getElementById("mt-time").value;
+      var note = document.getElementById("mt-note").value.trim();
+      if(!emp || !day || !time){ toast("Pick a staff member, date and time"); return; }
+      var parts = day.split("-"); var hm = time.split(":");
+      var at = new Date(+parts[0], +parts[1] - 1, +parts[2], +hm[0], +hm[1]).getTime();
+      if(isNaN(at)){ toast("That date or time doesn't look right"); return; }
+      if(at > Date.now()){ toast("That time is in the future"); return; }
+      DB.logEvent({ type:"time", dir:dir, employeeId:emp.id, employeeName:emp.name, atMs:at, manual:true,
+        enteredById:state.employee.id, enteredByName:state.employee.name, note:note }).then(function(){
+        toast("Saved "+(dir==="in"?"Time-In":"Time-Out")+" for "+emp.name+" at "+fmtTime(at));
+        return refreshEvents();
+      }).then(function(){ go("admin-hours"); }).catch(reportSaveError);
     });
 
     // Admin: re-run today's stock check against Square

@@ -20,12 +20,15 @@ service cloud.firestore {
     }
 
     // Append-only audit trail, stamped with the server time and the
-    // signed-in staff member.
+    // signed-in staff member - or, for a clock-on/off the boss adds for
+    // someone who forgot, stamped with the boss as the one who entered it.
     match /events/{eventId} {
       allow read: if signedIn();
       allow create: if signedIn()
         && request.resource.data.createdAt == request.time
-        && request.resource.data.employeeId == request.auth.uid;
+        && (request.resource.data.employeeId == request.auth.uid
+            || (isBoss() && request.resource.data.type == 'time'
+                && request.resource.data.enteredById == request.auth.uid));
       allow update, delete: if false;
     }
 
