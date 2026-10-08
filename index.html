@@ -290,6 +290,7 @@
 <!-- Firebase (only loaded/used when the shop configures it) -->
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
 
 <script>
@@ -331,11 +332,16 @@
     publicKey: "pUmL3B0hCd3u6cW-0"
   };
 
-  // Square sales check. The Square access token is a real secret, so it lives
-  // only in a small Cloudflare Worker (square-worker/worker.js in this repo);
-  // the app just calls that worker's public URL, which returns grams sold per
-  // item and nothing else. Leave null and the stock check is skipped.
-  var EMBEDDED_SQUARE_CONFIG = { salesUrl: "https://biltong-square.mroets.workers.dev" };
+  // The private go-between (Cloudflare Worker, square-worker/worker.js in this
+  // repo). The repo is public, so secrets live there instead of here: it
+  // checks staff PINs and hands back a Firebase sign-in token (so PINs never
+  // have to be readable by the app), and it holds the Square access token.
+  // This URL is not a secret.
+  var EMBEDDED_WORKER_URL = "https://biltong-square.mroets.workers.dev";
+
+  // Square sales check, served by the worker above. Set to null to skip the
+  // stock check.
+  var EMBEDDED_SQUARE_CONFIG = { salesUrl: EMBEDDED_WORKER_URL };
 
   // A flavour is flagged at Stock-Out when the grams that went missing (after
   // the drying estimate) are more than this many grams AND this percentage of
@@ -429,6 +435,7 @@
         try{
           if(!firebase.apps.length){ firebase.initializeApp(cfg); }
           self._fs = firebase.firestore();
+          self._auth = firebase.auth();
           self.mode = "cloud";
           return Promise.resolve();
         }catch(e){
@@ -451,6 +458,44 @@
     },
     clearCloudConfig: function(){
       localStorage.removeItem(LS_CONFIG);
+    },
+
+    // Cloud sign-in: the worker checks the PIN (staff PINs are not readable
+    // from the app) and returns a Firebase custom token. Firestore rules then
+    // only let signed-in staff in, and only the boss manage staff/flavours.
+    signInWithPin: function(pin){
+      var auth = this._auth;
+      return fetch(EMBEDDED_WORKER_URL.replace(/\/+$/, "") + "/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: pin })
+      }).catch(function(){
+        throw new Error("Could not reach the login service - check the internet");
+      }).then(function(res){
+        return res.json().catch(function(){ return {}; }).then(function(json){
+          if(!res.ok || !json.ok) throw new Error(json.error || ("Login failed (" + res.status + ")"));
+          return auth.signInWithCustomToken(json.token).then(function(){ return json.employee; });
+        });
+      });
+    },
+    // Resolves to the signed-in staff member (from the token's claims), or null.
+    currentStaff: function(){
+      var auth = this._auth;
+      return new Promise(function(resolve){
+        var off = auth.onAuthStateChanged(function(user){ off(); resolve(user); });
+      }).then(function(user){
+        if(!user) return null;
+        return user.getIdTokenResult().then(function(t){
+          return { id: user.uid, name: t.claims.staffName || "Staff", isAdmin: t.claims.boss === true };
+        });
+      });
+    },
+    getIdToken: function(){
+      var user = this._auth && this._auth.currentUser;
+      return user ? user.getIdToken() : Promise.resolve(null);
+    },
+    signOut: function(){
+      return this._auth ? this._auth.signOut() : Promise.resolve();
     },
 
     getEmployees: function(){
@@ -691,7 +736,9 @@
   function squareGet(path){
     var cfg = getSquareConfig();
     if(!cfg) return Promise.reject(new Error("Square is not set up"));
-    return fetch(cfg.salesUrl.replace(/\/+$/, "") + path).then(function(res){
+    return DB.getIdToken().then(function(token){
+      return fetch(cfg.salesUrl.replace(/\/+$/, "") + path, { headers: token ? { "Authorization": "Bearer " + token } : {} });
+    }).then(function(res){
       return res.json().catch(function(){ return {}; }).then(function(json){
         if(!res.ok || !json.ok) throw new Error(json.error || ("HTTP " + res.status));
         return json;
@@ -834,7 +881,8 @@
     formData: {},
     loading: true,
     canInstall: false,
-    installDismissed: false
+    installDismissed: false,
+    loggingIn: false
   };
 
   try{ state.installDismissed = localStorage.getItem(LS_INSTALL_DISMISSED) === "1"; }catch(e){}
@@ -1509,7 +1557,7 @@
       '</div>' +
       '<div>' +
         '<div class="pin-display">'+dots+'</div>' +
-        '<div class="login-err">'+(state.pinError||"&nbsp;")+'</div>' +
+        '<div class="login-err">'+(state.loggingIn ? '<span style="color:var(--text-dim);">Checking...</span>' : (escapeHtml(state.pinError)||"&nbsp;"))+'</div>' +
       '</div>' +
       '<div class="keypad">'+keypad+'</div>' +
     '</div>';
@@ -1519,7 +1567,7 @@
     bindInstallBanner();
     document.querySelectorAll("[data-key]").forEach(function(btn){
       btn.addEventListener("click", function(){
-        if(state.pin.length >= PIN_LENGTH) return;
+        if(state.pin.length >= PIN_LENGTH || state.loggingIn) return;
         state.pin += btn.getAttribute("data-key");
         state.pinError = "";
         if(state.pin.length === PIN_LENGTH) tryLogin();
@@ -1528,6 +1576,7 @@
     });
     var del = document.getElementById("key-del");
     if(del) del.addEventListener("click", function(){
+      if(state.loggingIn) return;
       state.pin = state.pin.slice(0,-1);
       state.pinError = "";
       render();
@@ -1535,21 +1584,29 @@
   }
 
   function tryLogin(){
+    var pin = state.pin;
+    state.loggingIn = true;
     render();
-    setTimeout(function(){
-      var emp = state.employees.find(function(e){ return e.pin === state.pin; });
-      if(emp){
-        state.employee = emp;
-        state.pin = "";
-        state.pinError = "";
-        try{ localStorage.setItem(LS_SESSION, emp.id); }catch(e){}
-        go("home");
-      }else{
-        state.pinError = "PIN not recognised";
-        state.pin = "";
-        render();
-      }
-    }, 120);
+    var attempt = DB.isCloud() ? DB.signInWithPin(pin) : new Promise(function(resolve, reject){
+      var emp = state.employees.find(function(e){ return e.pin === pin; });
+      setTimeout(function(){ emp ? resolve(emp) : reject(new Error("PIN not recognised")); }, 120);
+    });
+    attempt.then(function(emp){
+      state.employee = emp;
+      if(!DB.isCloud()){ try{ localStorage.setItem(LS_SESSION, emp.id); }catch(e){} }
+      return refreshAll();
+    }).then(function(){
+      state.loggingIn = false; state.pin = ""; state.pinError = "";
+      go("home");
+    }).catch(function(err){
+      console.error("Login failed:", err);
+      if(state.employee && DB.isCloud()){ DB.signOut(); }
+      state.employee = null;
+      state.loggingIn = false;
+      state.pinError = (err && err.message) || "PIN not recognised";
+      state.pin = "";
+      render();
+    });
   }
 
   /* ============================= SCREEN BINDINGS ============================== */
@@ -1563,6 +1620,10 @@
     if(logout) logout.addEventListener("click", function(){
       state.employee = null; state.pin = "";
       try{ localStorage.removeItem(LS_SESSION); }catch(e){}
+      if(DB.isCloud()){
+        state.employees = []; state.flavours = []; state.events = [];
+        DB.signOut();
+      }
       go("login");
     });
 
@@ -1786,20 +1847,39 @@
   function refreshEvents(){
     return DB.getEvents(400).then(function(evs){ state.events = evs; });
   }
+  // In the cloud only the boss may read the staff list (it holds PINs).
   function refreshAll(){
-    return Promise.all([DB.getEmployees(), DB.getFlavours(), DB.getEvents(400)]).then(function(r){
+    var needStaff = !DB.isCloud() || (state.employee && state.employee.isAdmin);
+    return Promise.all([needStaff ? DB.getEmployees() : Promise.resolve([]), DB.getFlavours(), DB.getEvents(400)]).then(function(r){
       state.employees = r[0]; state.flavours = r[1]; state.events = r[2];
     });
   }
 
-  // A freshly-connected Firestore project has no employees yet, which would
-  // otherwise lock everyone out (there's nothing to log in with). Bootstrap
-  // one owner account so the person who just connected can get in and add
-  // real staff/flavours from the Manage menu.
-  function ensureOwnerSeed(){
-    if(!DB.isCloud()) return Promise.resolve();
-    if(state.employees.length > 0) return Promise.resolve();
-    return DB.saveEmployee({ name:"Owner", pin:"9A9B9C", isAdmin:true }).then(refreshAll);
+  // Demo mode checks PINs locally, so it loads everything up front and
+  // restores the last session from localStorage. The cloud loads nothing
+  // until someone is signed in (Firestore rules refuse it), and the session
+  // is Firebase's own sign-in, which survives a reload. A staff member who
+  // was removed is refused by the rules and sent back to the PIN screen.
+  function loadSession(){
+    if(!DB.isCloud()){
+      return refreshAll().then(function(){
+        var sessId = null;
+        try{ sessId = localStorage.getItem(LS_SESSION); }catch(e){}
+        var emp = sessId ? state.employees.find(function(e){ return e.id === sessId; }) : null;
+        if(emp) state.employee = emp;
+      });
+    }
+    return DB.currentStaff().then(function(emp){
+      if(!emp) return;
+      state.employee = emp;
+      return refreshAll().catch(function(err){
+        if(err && err.code === "permission-denied"){
+          state.employee = null;
+          return DB.signOut();
+        }
+        throw err;
+      });
+    });
   }
 
   function boot(initialData){
@@ -1815,16 +1895,10 @@
       render();
     }, timeoutMs);
 
-    DB.init().then(refreshAll).then(ensureOwnerSeed).then(function(){
+    DB.init().then(loadSession).then(function(){
       if(timedOut) return;
       clearTimeout(timer);
       state.loading = false;
-      var sessId = null;
-      try{ sessId = localStorage.getItem(LS_SESSION); }catch(e){}
-      if(sessId){
-        var emp = state.employees.find(function(e){ return e.id === sessId; });
-        if(emp) state.employee = emp;
-      }
       if(initialData && initialData.screen){ state.screen = initialData.screen; }
       render();
     }).catch(function(err){
