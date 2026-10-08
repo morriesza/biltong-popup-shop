@@ -74,9 +74,11 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 
 ## Open items / ideas
 - Confirm the first real end-of-day email arrives and looks right.
-- PIN login via the worker: owner to enable Firebase Authentication, add FIREBASE_SERVICE_ACCOUNT, redeploy worker, then publish firestore.rules.
+- PIN login via the worker is live (Firebase Authentication on, FIREBASE_SERVICE_ACCOUNT set, firestore.rules published).
+  PINs were publicly readable before this; owner advised to change all PINs (boss first).
 - Owner was walked through restricting the Firebase API key in Google Cloud Console (HTTP referrer = the GitHub Pages site, API = Firestore only);
-  completion not confirmed. If restricted, it must also allow Identity Toolkit API and Token Service API (needed for sign-in).
+  done: the app's key (Sep 29) is referrer-restricted and allows Cloud Firestore, Identity Toolkit and Token Service APIs.
+  A second auto-created browser key (Oct 8) is unused by the app.
 - Consider more history than the latest 400 events for long-term trend views (e.g. a daily snapshot collection).
 
 ## Workflow
