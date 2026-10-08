@@ -1143,6 +1143,7 @@
       '</div>' +
       (already ? '<p class="muted" style="font-size:12.5px;margin-top:10px;">Already logged '+(isIn?"in":"out")+' today at '+fmtTime(eventTime(todaysEvents.filter(function(e){return e.dir===dir;})[0]))+'. You can log it again if this is a correction.</p>' : '') +
       '<button class="btn btn-primary" style="width:100%;margin-top:16px;" id="btn-submit-time">Confirm '+(isIn?"time-in":"time-out")+'</button>' +
+      (state.employee.isAdmin ? '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" id="btn-time-for-staff" data-dir="'+dir+'">'+(isIn?"Clock in":"Clock out")+' a staff member instead</button>' : '') +
     '</div>';
   }
 
@@ -1289,7 +1290,8 @@
     return backRow("Manage") +
     '<h1 style="font-size:20px;">Staff PINs</h1>' +
     '<div class="card" style="padding-block:4px;">'+rows+'</div>' +
-    '<button class="btn btn-primary" style="width:100%;" id="btn-add-employee">Add staff member</button>';
+    '<button class="btn btn-primary" style="width:100%;" id="btn-add-employee">Add staff member</button>' +
+    '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" data-go="admin-hours">Staff hours & missed clock-ons</button>';
   }
 
   function renderEmployeeEdit(id){
@@ -1820,6 +1822,8 @@
     });
 
     // Admin: staff hours
+    var forStaff = document.getElementById("btn-time-for-staff");
+    if(forStaff) forStaff.addEventListener("click", function(){ go("admin-hours", { dir: forStaff.getAttribute("data-dir") }); });
     document.querySelectorAll("[data-fill-emp]").forEach(function(btn){
       btn.addEventListener("click", function(){
         go("admin-hours", { emp: btn.getAttribute("data-fill-emp"), dir: btn.getAttribute("data-fill-dir"), day: btn.getAttribute("data-fill-day") });
