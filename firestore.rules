@@ -1,0 +1,48 @@
+rules_version = '2';
+// Biltong Floor Log - Firestore security rules.
+// Paste into Firebase console -> Firestore Database -> Rules, then Publish.
+//
+// Staff sign in with their PIN through the Cloudflare worker, which gives
+// them a Firebase sign-in whose uid is their employees document id. Removing
+// someone from Staff locks them out straight away (signedIn() checks their
+// document still exists), and boss rights come from the database, not the
+// device.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/employees/$(request.auth.uid));
+    }
+    function isBoss() {
+      return signedIn()
+        && get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    // Append-only audit trail, stamped with the server time and the
+    // signed-in staff member.
+    match /events/{eventId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.employeeId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Staff may only change the current stock reading; the boss manages
+    // names and thresholds.
+    match /flavours/{flavourId} {
+      allow read: if signedIn();
+      allow update: if isBoss()
+        || (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastStockG', 'lastStockAt']));
+      allow create, delete: if isBoss();
+    }
+
+    // Holds PINs: boss only. (The worker reads it with its own key.)
+    match /employees/{employeeId} {
+      allow read, write: if isBoss();
+    }
+
+    // Anything else (e.g. the worker's loginGuard counters) is closed to the app.
+  }
+}
