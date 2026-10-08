@@ -61,7 +61,7 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 
 ## Open items / ideas
 - Confirm the first real end-of-day email arrives and looks right.
-- Square: owner to create the Square token + Cloudflare Worker; then set EMBEDDED_SQUARE_CONFIG.salesUrl.
+- Square: worker deployed at https://biltong-square.mroets.workers.dev and wired in; confirm SQUARE_TOKEN/ALLOWED_ORIGIN are set and Test connection works.
 - Owner was walked through restricting the Firebase API key in Google Cloud Console (HTTP referrer = the GitHub Pages site, API = Firestore only);
   completion not confirmed.
 - Firestore rules currently allow open writes to `flavours` (needed for renames and restock increments); `events` are append-only.
