@@ -335,9 +335,7 @@
   // only in a small Cloudflare Worker (square-worker/worker.js in this repo);
   // the app just calls that worker's public URL, which returns grams sold per
   // item and nothing else. Leave null and the stock check is skipped.
-  var EMBEDDED_SQUARE_CONFIG = null;
-  // Example once the worker is set up:
-  // var EMBEDDED_SQUARE_CONFIG = { salesUrl: "https://biltong-square.example.workers.dev" };
+  var EMBEDDED_SQUARE_CONFIG = { salesUrl: "https://biltong-square.mroets.workers.dev" };
 
   // A flavour is flagged at Stock-Out when the grams that went missing (after
   // the drying estimate) are more than this many grams AND this percentage of
