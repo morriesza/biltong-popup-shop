@@ -7,6 +7,7 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 - `index.html` - the entire app: one self-contained file (HTML + CSS + inline JS IIFE). No build step, no frameworks.
 - `manifest.json`, `sw.js` - PWA install support (Android "Install app" prompt; iOS only supports Add to Home Screen).
 - `img/SafariCafe-logo.png` - logo, shown full width at the top of every screen.
+- `square-worker/worker.js` - Cloudflare Worker that reads Square sales (holds the Square token as a secret).
 
 ## What the app does
 - 6-character PIN login (characters 0-9 and A/B/C). Employees are stored in Firestore.
@@ -19,7 +20,8 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 
 ## Data (Firebase Firestore, project biltong-popup-toowong)
 - Collections: `employees`, `flavours`, `events`.
-- Event types: `time`, `cash` (amount + breakdown), `stock` (readings map, flagged list), `restock` (flavourId, flavourName, amountG, note).
+- Event types: `time`, `cash` (amount + breakdown), `stock` (readings map, flagged list), `restock` (flavourId, flavourName, amountG, note),
+  `sales` (Square stock check: day, orders, rows, unmatched, unweighed, flagged).
 - The Firebase web config is embedded in `index.html` (EMBEDDED_FIREBASE_CONFIG) on purpose: it is not a secret, staff must never have
   to paste credentials on their own phones, and the real protection is the Firestore security rules. Do NOT change this to a per-device setup.
   A per-device override still exists under Manage -> Database for testing only.
@@ -35,6 +37,19 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
   IDs to email anyone else. Template content should be `<div style="white-space:pre-wrap">{{message}}</div>` (double braces = escaped)
   so line breaks show; never use triple braces. The EmailJS private key is never needed by the app.
 
+## Square stock check
+- Square sells biltong by weight on the scale; all sales (cash too) go through Square. Tasters are NOT rung up - the app estimates them.
+- `square-worker/worker.js` is a Cloudflare Worker that holds the Square access token as the secret `SQUARE_TOKEN` (never in this repo,
+  never in chat). Also `ALLOWED_ORIGIN` = https://morriesza.github.io and optional `LOCATION_IDS`. It returns only grams/cents per item.
+- App config: `EMBEDDED_SQUARE_CONFIG = { salesUrl: "<worker URL>" }` (null = check skipped). The worker URL is not a secret.
+- At Stock-Out the app fetches sales since that day's Stock-In and logs a `sales` event (append-only) with per-flavour rows:
+  missing = open + deliveries - sold - close; drying estimated from the overnight drop (Stock-Out -> next Stock-In, avg of last 10 nights);
+  tasters = missing - drying. Flag when unexplained > RECON_TOLERANCE_G and > RECON_TOLERANCE_PCT of sold, or over by RECON_OVER_G.
+- Square items match flavours by name (item, variation or both; case/punctuation ignored) or the flavour's `squareName` override.
+- Screens: `stockcheck` (shown after Stock-Out; staff see sold + re-weigh prompts) and Manage -> Stock Check (boss detail, 7-day totals).
+- Drying estimates depend on Stock-In being a real weigh-in (it is pre-filled with last close).
+- Firestore rules must allow creating `events` with type `sales` (check if rules validate event types).
+
 ## Hard-won rules (do not repeat these mistakes)
 - Keep the file ASCII-only. Earlier, UTF-8 double-encoding produced "A-circumflex" junk characters in the UI.
 - JS strings use single quotes: escape apostrophes in contractions (\') or the whole script breaks and the page goes blank.
@@ -46,6 +61,7 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 
 ## Open items / ideas
 - Confirm the first real end-of-day email arrives and looks right.
+- Square: owner to create the Square token + Cloudflare Worker; then set EMBEDDED_SQUARE_CONFIG.salesUrl.
 - Owner was walked through restricting the Firebase API key in Google Cloud Console (HTTP referrer = the GitHub Pages site, API = Firestore only);
   completion not confirmed.
 - Firestore rules currently allow open writes to `flavours` (needed for renames and restock increments); `events` are append-only.
