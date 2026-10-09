@@ -67,10 +67,15 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 - Screens: `stockcheck` (shown after Stock-Out; staff see sold + re-weigh prompts) and Manage -> Stock Check (boss detail, 7-day totals).
 - Manage -> Weekly Sales (boss): live Square sales for a Monday-Sunday week, grouped per flavour (grams, $, avg $/kg, share) and
   per day, with previous/next week. Fetched one day per /sales call (worker max window is 36 h), nothing saved.
-  Amounts are Square gross sales (before discounts).
+  Amounts are Square gross sales (before discounts). The end-of-day email also includes this week's Square sales per flavour
+  (fetchWeekSales(0)); if Square can't be reached the email still sends with a note.
 - Drying estimates depend on Stock-In being a real weigh-in (it is pre-filled with last close).
 
 ## Hard-won rules (do not repeat these mistakes)
+- Bump `APP_VERSION` in index.html on every change that ships (format YYYY-MM-DD.N). The app fetches the live page every 5 min and
+  when it comes back on screen, and shows an "Update now" banner when the version differs - tablets/home-screen apps otherwise keep
+  showing an old cached copy. The version is shown on the PIN screen and under Manage.
+- Smoke-test harnesses should stub setInterval (the update check's 5-minute timer keeps node running).
 - Keep the file ASCII-only. Earlier, UTF-8 double-encoding produced "A-circumflex" junk characters in the UI.
 - JS strings use single quotes: escape apostrophes in contractions (\') or the whole script breaks and the page goes blank.
 - Before shipping ANY edit: extract the inline `<script>`, run `node --check` on it, and smoke-test with stubbed browser globals
