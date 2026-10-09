@@ -23,7 +23,7 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 - Cash is counted per denomination (AUD: $100, $50, $20, $10, $5, $2, $1, 50c, 20c, 10c, 5c); total is calculated live; breakdown is saved on the event.
 - Stock is weighed in grams per flavour. Flavours have low-stock thresholds; a red banner shows when any flavour is at or below threshold.
 - Boss (isAdmin) gets Manage: Flavours, Staff, Staff Hours, Activity log, Stock Log (closing-stock trend per flavour + deliveries),
-  Stock Check, Email Reports, Database.
+  Stock Check, Weekly Sales, Email Reports, Database.
 - Staff Hours: one shift per person per day (earliest Time-In, latest Time-Out; boss-added entries win, latest added counts),
   hours per day and 7-day totals, "Missing - add" for gaps. The boss can add a missed Time-In/Out for anyone: a new `time` event
   with `atMs` (the real time), `manual: true`, `enteredById`/`enteredByName` (the boss) and optional `note`. Use `eventTime(e)`
@@ -65,6 +65,9 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
   tasters = missing - drying. Flag when unexplained > RECON_TOLERANCE_G and > RECON_TOLERANCE_PCT of sold, or over by RECON_OVER_G.
 - Square items match flavours by name (item, variation or both; case/punctuation ignored) or the flavour's `squareName` override.
 - Screens: `stockcheck` (shown after Stock-Out; staff see sold + re-weigh prompts) and Manage -> Stock Check (boss detail, 7-day totals).
+- Manage -> Weekly Sales (boss): live Square sales for a Monday-Sunday week, grouped per flavour (grams, $, avg $/kg, share) and
+  per day, with previous/next week. Fetched one day per /sales call (worker max window is 36 h), nothing saved.
+  Amounts are Square gross sales (before discounts).
 - Drying estimates depend on Stock-In being a real weigh-in (it is pre-filled with last close).
 
 ## Hard-won rules (do not repeat these mistakes)
