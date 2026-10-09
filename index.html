@@ -972,6 +972,8 @@
   }
 
   function go(screen, data){
+    // Weekly sales is a live look at Square: start fresh at this week each visit.
+    if(screen === "admin-weekly" && state.screen !== "admin-weekly"){ weekly.offset = 0; weekly.data = null; weekly.error = ""; weekly.key = null; }
     state.screen = screen;
     state.formData = data || {};
     render();
@@ -1040,6 +1042,7 @@
       case "admin-email": html += renderAdminEmail(); break;
       case "admin-stockcheck": html += renderAdminStockCheck(); break;
       case "admin-hours": html += renderAdminHours(); break;
+      case "admin-weekly": html += renderAdminWeekly(); break;
       case "stockcheck": html += renderStockCheckResult(); break;
       case "restock": html += renderRestock(); break;
       default: html += renderHome();
@@ -1241,6 +1244,7 @@
       '<button class="tile time" data-go="admin-log"><div class="glyph">'+svgIcon("clockIn")+'</div><div><div class="lbl">Activity log</div><div class="sub">All check-ins</div></div></button>' +
       '<button class="tile time" data-go="admin-stocklog"><div class="glyph">'+svgIcon("scaleOut")+'</div><div><div class="lbl">Stock Log</div><div class="sub">Trends & deliveries</div></div></button>' +
       '<button class="tile time" data-go="admin-stockcheck"><div class="glyph">'+svgIcon("scaleIn")+'</div><div><div class="lbl">Stock Check</div><div class="sub">'+(getSquareConfig()?"Weigh-ins vs Square sales":"Square not set up")+'</div></div></button>' +
+      '<button class="tile time" data-go="admin-weekly"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Weekly Sales</div><div class="sub">'+(getSquareConfig()?"Square sales per flavour, Mon-Sun":"Square not set up")+'</div></div></button>' +
       '<button class="tile time" data-go="admin-email"><div class="glyph">'+svgIcon("cashOut")+'</div><div><div class="lbl">Email Reports</div><div class="sub">'+(getEmailConfig()?"Configured":"Not set up")+'</div></div></button>' +
       '<button class="tile time" data-go="admin-connect"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Database</div><div class="sub">'+(DB.isCloud()?"Connected":"Demo mode")+'</div></div></button>' +
     '</div>';
@@ -1417,6 +1421,123 @@
       '</div>' +
       '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" id="btn-test-email">Send test email</button>' +
     '</div>';
+  }
+
+  /* ---- Weekly Square sales ---- */
+  // Weeks run Monday to Sunday. The worker only serves up to 36 hours per
+  // request, so the week is fetched one day at a time (Monday up to now for
+  // the current week) and added up here, per flavour. Nothing is saved; it is
+  // a live look at Square.
+  var weekly = { offset: 0, key: null, loading: false, data: null, error: "" };
+
+  function weekStart(offset){
+    var now = new Date();
+    var back = (now.getDay() + 6) % 7; // days since Monday
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() - back + 7 * offset);
+  }
+  function fmtDay(d){ return d.toLocaleDateString([], { weekday:"short", day:"numeric", month:"short" }); }
+  function fmtWeight(g){ return Math.abs(g) >= 1000 ? (Math.round(g / 10) / 100) + " kg" : Math.round(g) + " g"; }
+
+  function loadWeekly(){
+    var offset = weekly.offset;
+    var start = weekStart(offset);
+    var key = todayKey(start);
+    weekly.key = key; weekly.loading = true; weekly.error = ""; weekly.data = null;
+    var now = Date.now();
+    var days = [];
+    for(var i = 0; i < 7; i++){
+      var from = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      var to = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i + 1);
+      days.push({ date: from, fromMs: from.getTime(), toMs: Math.min(to.getTime(), now), future: from.getTime() > now });
+    }
+    return Promise.all(days.map(function(d){
+      if(d.future) return Promise.resolve(null);
+      return squareGet("/sales?from=" + encodeURIComponent(new Date(d.fromMs).toISOString()) + "&to=" + encodeURIComponent(new Date(d.toMs).toISOString()));
+    })).then(function(results){
+      var groups = {}; var unweighed = {};
+      days.forEach(function(d, i){
+        var res = results[i];
+        d.grams = 0; d.cents = 0; d.orders = res ? (res.orders || 0) : 0;
+        if(!res) return;
+        (res.items || []).forEach(function(it){
+          var f = matchFlavour(it);
+          var gkey = f ? f.id : "sq:" + (it.name || "") + "|" + (it.variation || "");
+          var g = groups[gkey];
+          if(!g){ g = groups[gkey] = { name: f ? f.name : (it.name || "Unnamed") + (it.variation ? " - " + it.variation : ""), matched: !!f, grams: 0, cents: 0 }; }
+          g.grams += it.grams || 0; g.cents += it.cents || 0;
+          d.grams += it.grams || 0; d.cents += it.cents || 0;
+        });
+        (res.unweighed || []).forEach(function(u){
+          var n = (u.name || "") + (u.variation ? " - " + u.variation : "");
+          unweighed[n] = (unweighed[n] || 0) + (u.qty || 0);
+        });
+      });
+      if(weekly.key !== key) return;
+      weekly.data = { days: days, groups: Object.keys(groups).map(function(k){ return groups[k]; }), unweighed: unweighed };
+    }).catch(function(err){
+      if(weekly.key !== key) return;
+      console.error("Weekly sales failed:", err);
+      weekly.error = (err && err.message) || "Could not load Square sales";
+    }).then(function(){
+      if(weekly.key !== key) return;
+      weekly.loading = false;
+      if(state.screen === "admin-weekly") render();
+    });
+  }
+
+  function renderAdminWeekly(){
+    if(!getSquareConfig()) return backRow("Manage") + '<div class="card empty">Square is not set up yet.</div>';
+    var start = weekStart(weekly.offset);
+    var end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+    var title = fmtDay(start) + " - " + fmtDay(end) + (weekly.offset === 0 ? " (this week)" : (weekly.offset === -1 ? " (last week)" : ""));
+    var nav = '<div class="btnrow" style="margin-top:12px;gap:8px;">' +
+      '<button class="btn btn-ghost" style="flex:1;" id="btn-week-prev">&lt; Previous week</button>' +
+      (weekly.offset < 0 ? '<button class="btn btn-ghost" style="flex:1;" id="btn-week-next">Next week &gt;</button>' : '') +
+      '<button class="btn btn-ghost" id="btn-week-refresh">Refresh</button>' +
+    '</div>';
+    var head = backRow("Manage") +
+      '<h1 style="font-size:20px;">Weekly sales</h1>' +
+      '<div class="card"><div class="eyebrow">Week (Monday - Sunday)</div><div style="font-weight:700;font-size:15px;margin-top:4px;">'+escapeHtml(title)+'</div>' + nav + '</div>';
+
+    if(weekly.loading || !weekly.data){
+      if(weekly.error) return head + '<div class="card" style="color:var(--bad);">Could not load Square sales: '+escapeHtml(weekly.error)+'</div>';
+      return head + '<div class="card empty">Loading Square sales...</div>';
+    }
+    var data = weekly.data;
+    var totalG = 0, totalC = 0, orders = 0;
+    data.days.forEach(function(d){ totalG += d.grams || 0; totalC += d.cents || 0; orders += d.orders || 0; });
+    var groups = data.groups.slice().sort(function(a, b){ return b.grams - a.grams; });
+
+    var flavourRows = groups.map(function(g){
+      var share = totalG > 0 ? Math.round(g.grams / totalG * 100) : 0;
+      var perKg = g.grams > 0 ? fmtMoney(g.cents / 100 / (g.grams / 1000)) + "/kg" : "";
+      return '<div class="list-row">' +
+        '<div class="main"><div class="t">'+escapeHtml(g.name)+(g.matched ? '' : ' <span class="tag">not a flavour</span>')+'</div>' +
+          '<div class="s">'+share+'% of grams'+(perKg ? ' - avg '+perKg : '')+'</div></div>' +
+        '<div class="tabular" style="text-align:right;"><div style="font-weight:700;">'+fmtWeight(g.grams)+'</div><div class="s">'+fmtMoney(g.cents/100)+'</div></div>' +
+      '</div>';
+    }).join("") || '<div class="empty" style="padding:12px 0;">No biltong sold through Square this week yet.</div>';
+
+    var dayRows = data.days.map(function(d){
+      return '<div class="list-row">' +
+        '<div class="main"><div class="t" style="font-size:13.5px;">'+escapeHtml(fmtDay(d.date))+'</div><div class="s">'+(d.future ? 'still to come' : d.orders+' orders')+'</div></div>' +
+        '<div class="tabular" style="text-align:right;">'+(d.future ? '-' : '<div>'+fmtWeight(d.grams)+'</div><div class="s">'+fmtMoney(d.cents/100)+'</div>')+'</div>' +
+      '</div>';
+    }).join("");
+
+    var unweighedNames = Object.keys(data.unweighed);
+    var extras = unweighedNames.length ? '<p class="s muted" style="margin-top:10px;">Also sold per piece (not by weight, not counted above): ' +
+      escapeHtml(unweighedNames.map(function(n){ return n + " x" + data.unweighed[n]; }).join(", ")) + '.</p>' : '';
+
+    return head +
+      '<div class="card">' +
+        '<div class="eyebrow">Week total</div>' +
+        '<div class="list-row"><div class="main"><div class="t">Biltong sold</div></div><div class="tabular" style="font-weight:700;">'+fmtWeight(totalG)+'</div></div>' +
+        '<div class="list-row"><div class="main"><div class="t">Sales (before discounts)</div></div><div class="tabular" style="font-weight:700;">'+fmtMoney(totalC/100)+'</div></div>' +
+        '<div class="list-row"><div class="main"><div class="t">Square orders</div></div><div class="tabular">'+orders+'</div></div>' +
+      '</div>' +
+      '<div class="card"><div class="eyebrow">Per flavour</div><div style="padding-block:4px;">'+flavourRows+'</div>'+extras+'</div>' +
+      '<div class="card"><div class="eyebrow">Per day</div><div style="padding-block:4px;">'+dayRows+'</div></div>';
   }
 
   /* ---- Staff hours ---- */
@@ -1820,6 +1941,17 @@
         return refreshAll();
       }).then(function(){ go("home"); }).catch(reportSaveError);
     });
+
+    // Admin: weekly sales
+    if(state.screen === "admin-weekly" && getSquareConfig() && !weekly.loading && (!weekly.data || weekly.key !== todayKey(weekStart(weekly.offset))) && !weekly.error){
+      loadWeekly(); render(); return;
+    }
+    var wPrev = document.getElementById("btn-week-prev");
+    if(wPrev) wPrev.addEventListener("click", function(){ weekly.offset--; weekly.error = ""; loadWeekly(); render(); });
+    var wNext = document.getElementById("btn-week-next");
+    if(wNext) wNext.addEventListener("click", function(){ weekly.offset++; weekly.error = ""; loadWeekly(); render(); });
+    var wRefresh = document.getElementById("btn-week-refresh");
+    if(wRefresh) wRefresh.addEventListener("click", function(){ weekly.error = ""; loadWeekly(); render(); });
 
     // Admin: staff hours
     var forStaff = document.getElementById("btn-time-for-staff");
