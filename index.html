@@ -367,6 +367,10 @@
     { key:"0.05", label:"5c", value:0.05 }
   ];
 
+  // Bump on every change that ships. The app compares it with the live page
+  // to offer a one-tap update (see checkForUpdate) and shows it under Manage.
+  var APP_VERSION = "2026-10-09.1";
+
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
 
@@ -698,6 +702,18 @@
     return lines.join("\n");
   }
 
+  function buildWeeklyReportText(data){
+    var totalG = 0, totalC = 0, orders = 0;
+    data.days.forEach(function(d){ totalG += d.grams || 0; totalC += d.cents || 0; orders += d.orders || 0; });
+    var lines = ["", "", "SQUARE SALES THIS WEEK (" + fmtDay(data.start) + " to today):"];
+    lines.push("- Total: " + fmtWeight(totalG) + ", " + fmtMoney(totalC/100) + " (before discounts), " + orders + " orders");
+    data.groups.slice().sort(function(a, b){ return b.grams - a.grams; }).forEach(function(g){
+      lines.push("- " + g.name + ": " + fmtWeight(g.grams) + ", " + fmtMoney(g.cents/100) + (g.matched ? "" : " (not matched to a flavour)"));
+    });
+    if(!data.groups.length) lines.push("- No biltong sold through Square yet this week.");
+    return lines.join("\n");
+  }
+
   function sendDailyReport(){
     var cfg = getEmailConfig();
     if(!cfg) return Promise.resolve();
@@ -709,14 +725,23 @@
     // title/name suit EmailJS's default "Contact Us" template. to_email is only
     // sent for a per-device override; the shared setup fixes the recipient in
     // the template itself.
-    var params = {
-      subject: subject,
-      title: subject,
-      name: "Biltong Floor Log",
-      message: buildDailyReportText()
-    };
-    if(cfg.toEmail) params.to_email = cfg.toEmail;
-    return emailjs.send(cfg.serviceId, cfg.templateId, params, cfg.publicKey).catch(function(err){
+    var text = buildDailyReportText();
+    // Add this week's Square sales (Monday up to now). If Square can't be
+    // reached the report still goes out, with a note instead.
+    var weekPart = getSquareConfig() ? fetchWeekSales(0).then(buildWeeklyReportText).catch(function(err){
+      console.error("Weekly sales for email failed:", err);
+      return "\n\nSQUARE SALES THIS WEEK:\n- Could not be loaded from Square (" + ((err && err.message) || "error") + ").";
+    }) : Promise.resolve("");
+    return weekPart.then(function(week){
+      var params = {
+        subject: subject,
+        title: subject,
+        name: "Biltong Floor Log",
+        message: text + week
+      };
+      if(cfg.toEmail) params.to_email = cfg.toEmail;
+      return emailjs.send(cfg.serviceId, cfg.templateId, params, cfg.publicKey);
+    }).catch(function(err){
       console.error("Email report failed:", err);
       toast("Saved, but the email report didn't send");
     });
@@ -916,6 +941,43 @@
     navigator.serviceWorker.register("sw.js").catch(function(){});
   }
 
+  // Tablets and home-screen apps can keep showing an old copy of this page.
+  // Every few minutes, and whenever the app comes back on screen, fetch the
+  // live page and compare APP_VERSION; if it changed, show an "Update now"
+  // banner. The banner is slotted in without redrawing the screen, so nothing
+  // half-typed (like a cash count) is lost.
+  function checkForUpdate(){
+    if(state.updateAvailable || typeof fetch !== "function" || !/^https?:$/.test(location.protocol || "")) return;
+    fetch(location.pathname + "?check=" + Date.now(), { cache: "no-store" }).then(function(res){
+      return res.ok ? res.text() : "";
+    }).then(function(text){
+      var m = text.match(new RegExp("APP_" + "VERSION = \"([0-9A-Za-z.-]+)\""));
+      if(!m || m[1] === APP_VERSION || state.updateAvailable) return;
+      state.updateAvailable = m[1];
+      if(document.getElementById("update-bar") || !app.firstChild) return;
+      var holder = document.createElement("div");
+      holder.innerHTML = renderUpdateBanner();
+      app.insertBefore(holder.firstChild, app.firstChild);
+      bindUpdateBanner();
+    }).catch(function(){});
+  }
+  function renderUpdateBanner(){
+    if(!state.updateAvailable) return "";
+    return '<div class="installbar" id="update-bar">' +
+      '<div class="txt">A new version of the app is ready.</div>' +
+      '<button class="go" id="btn-app-update">Update now</button>' +
+    '</div>';
+  }
+  function bindUpdateBanner(){
+    var btn = document.getElementById("btn-app-update");
+    if(btn) btn.addEventListener("click", function(){
+      location.replace(location.pathname + "?v=" + encodeURIComponent(state.updateAvailable));
+    });
+  }
+  setTimeout(checkForUpdate, 8000);
+  setInterval(checkForUpdate, 5 * 60 * 1000);
+  document.addEventListener("visibilitychange", function(){ if(!document.hidden) checkForUpdate(); });
+
   function renderInstallBanner(){
     if(isStandaloneDisplay() || state.installDismissed) return "";
     if(state.canInstall){
@@ -1024,7 +1086,7 @@
     if(s.loading){ app.innerHTML = renderLoading(); return; }
     if(!s.employee){ app.innerHTML = renderLogin(); bindLogin(); return; }
 
-    var html = renderTopbar() + renderInstallBanner() + renderAlertBanner();
+    var html = renderUpdateBanner() + renderTopbar() + renderInstallBanner() + renderAlertBanner();
 
     switch(s.screen){
       case "home": html += renderHome(); break;
@@ -1247,7 +1309,8 @@
       '<button class="tile time" data-go="admin-weekly"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Weekly Sales</div><div class="sub">'+(getSquareConfig()?"Square sales per flavour, Mon-Sun":"Square not set up")+'</div></div></button>' +
       '<button class="tile time" data-go="admin-email"><div class="glyph">'+svgIcon("cashOut")+'</div><div><div class="lbl">Email Reports</div><div class="sub">'+(getEmailConfig()?"Configured":"Not set up")+'</div></div></button>' +
       '<button class="tile time" data-go="admin-connect"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Database</div><div class="sub">'+(DB.isCloud()?"Connected":"Demo mode")+'</div></div></button>' +
-    '</div>';
+    '</div>' +
+    '<p class="muted" style="text-align:center;font-size:12px;margin-top:16px;">App version '+APP_VERSION+'</p>';
   }
 
   function renderAdminFlavours(){
@@ -1438,11 +1501,10 @@
   function fmtDay(d){ return d.toLocaleDateString([], { weekday:"short", day:"numeric", month:"short" }); }
   function fmtWeight(g){ return Math.abs(g) >= 1000 ? (Math.round(g / 10) / 100) + " kg" : Math.round(g) + " g"; }
 
-  function loadWeekly(){
-    var offset = weekly.offset;
+  // Resolves to { start, days, groups, unweighed } for the week `offset`
+  // weeks from this one (0 = this week, -1 = last week).
+  function fetchWeekSales(offset){
     var start = weekStart(offset);
-    var key = todayKey(start);
-    weekly.key = key; weekly.loading = true; weekly.error = ""; weekly.data = null;
     var now = Date.now();
     var days = [];
     for(var i = 0; i < 7; i++){
@@ -1455,6 +1517,7 @@
       return squareGet("/sales?from=" + encodeURIComponent(new Date(d.fromMs).toISOString()) + "&to=" + encodeURIComponent(new Date(d.toMs).toISOString()));
     })).then(function(results){
       var groups = {}; var unweighed = {};
+      var data = { start: start, days: days, groups: [], unweighed: unweighed };
       days.forEach(function(d, i){
         var res = results[i];
         d.grams = 0; d.cents = 0; d.orders = res ? (res.orders || 0) : 0;
@@ -1472,8 +1535,17 @@
           unweighed[n] = (unweighed[n] || 0) + (u.qty || 0);
         });
       });
+      data.groups = Object.keys(groups).map(function(k){ return groups[k]; });
+      return data;
+    });
+  }
+
+  function loadWeekly(){
+    var key = todayKey(weekStart(weekly.offset));
+    weekly.key = key; weekly.loading = true; weekly.error = ""; weekly.data = null;
+    return fetchWeekSales(weekly.offset).then(function(data){
       if(weekly.key !== key) return;
-      weekly.data = { days: days, groups: Object.keys(groups).map(function(k){ return groups[k]; }), unweighed: unweighed };
+      weekly.data = data;
     }).catch(function(err){
       if(weekly.key !== key) return;
       console.error("Weekly sales failed:", err);
@@ -1767,6 +1839,7 @@
     return '' +
     '<div id="screen-login">' +
       '<img class="logo-bar" src="img/SafariCafe-logo.png" alt="Safari Cafe" style="margin-top:-20px;" onerror="this.style.display=\'none\'">' +
+      renderUpdateBanner() +
       renderInstallBanner() +
       '<div class="login-hero">' +
         '<h1>Biltong Floor Log</h1>' +
@@ -1777,11 +1850,13 @@
         '<div class="login-err">'+(state.loggingIn ? '<span style="color:var(--text-dim);">Checking...</span>' : (escapeHtml(state.pinError)||"&nbsp;"))+'</div>' +
       '</div>' +
       '<div class="keypad">'+keypad+'</div>' +
+      '<p class="muted" style="text-align:center;font-size:11px;margin-top:14px;">Version '+APP_VERSION+'</p>' +
     '</div>';
   }
 
   function bindLogin(){
     bindInstallBanner();
+    bindUpdateBanner();
     document.querySelectorAll("[data-key]").forEach(function(btn){
       btn.addEventListener("click", function(){
         if(state.pin.length >= PIN_LENGTH || state.loggingIn) return;
@@ -1830,6 +1905,7 @@
 
   function bindScreen(){
     bindInstallBanner();
+    bindUpdateBanner();
     var back = document.getElementById("btn-back");
     if(back) back.addEventListener("click", function(){ go(state.screen.indexOf("admin-")===0 ? "admin" : "home"); });
 
