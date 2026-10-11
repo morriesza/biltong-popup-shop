@@ -8,6 +8,14 @@
 //   ALLOWED_ORIGIN            (Text)   https://morriesza.github.io
 //   LOCATION_IDS              (Text, optional) comma-separated Square
 //                             location IDs; unset = every location
+//   EMAILJS_PRIVATE_KEY       (Secret) EmailJS private key, for the
+//                             morning alert (sent from here, not a browser)
+//   ALERT_DAYS                (Text, optional) days to check, 1=Mon..7=Sun,
+//                             e.g. "1,2,3,4,5,6,7" (default: every day)
+//
+// Cron trigger (Settings -> Triggers): "20 23 * * *" = 9:20am Brisbane
+// (UTC+10, no daylight saving). At that time the worker checks today's
+// entries and emails the owner if Stock-In or Cash-In is missing.
 //
 // Endpoints:
 //   POST /login   { pin }  -> { ok, token, employee }
@@ -18,11 +26,19 @@
 //   GET  /sales?from=<ISO>&to=<ISO>   (signed in) -> { ok, orders, items, unweighed }
 //        Grams sold (and sales cents) per Square item for a time window -
 //        no customer, card or payment details.
+//   POST /opening-check   (boss) -> { ok, missing, sent }
+//        Runs the morning check now and always emails the result, marked
+//        TEST - for checking the setup.
 
 const SQUARE_API = "https://connect.squareup.com/v2";
 const SQUARE_VERSION = "2025-01-23";
 const MAX_WINDOW_MS = 36 * 60 * 60 * 1000;
 const PIN_PATTERN = /^[0-9ABC]{6}$/;
+
+// Public EmailJS IDs (the same ones the app uses). The recipient is fixed in
+// the EmailJS template, so they can only ever email the owner.
+const EMAILJS = { serviceId: "service_u98pame", templateId: "template_u19jdeu", publicKey: "pUmL3B0hCd3u6cW-0" };
+const SHOP_UTC_OFFSET_HOURS = 10; // Brisbane, no daylight saving
 
 const GUARD_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILS_PER_DEVICE = 10;
@@ -69,6 +85,11 @@ export default {
       if (url.pathname === "/login" && request.method === "POST") {
         return reply(200, await login(request, env));
       }
+      if (url.pathname === "/opening-check" && request.method === "POST") {
+        const user = await verifyIdToken(request, env);
+        if (user.boss !== true) throw new HttpError(403, "Boss only");
+        return reply(200, Object.assign({ ok: true }, await openingCheck(env, true)));
+      }
       if (request.method !== "GET") throw new HttpError(405, "Method not allowed");
       if (url.pathname === "/status") {
         await verifyIdToken(request, env);
@@ -89,8 +110,86 @@ export default {
       const status = err instanceof HttpError ? err.status : 502;
       return reply(status, { ok: false, error: String((err && err.message) || err) });
     }
+  },
+
+  // Cron trigger: the morning check.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(openingCheck(env, false).catch((err) => console.error("Opening check failed:", err)));
   }
 };
+
+/* ============================== morning alert ============================== */
+
+// Shop-local date parts for a moment in time.
+function shopDate(ms) {
+  const d = new Date(ms + SHOP_UTC_OFFSET_HOURS * 3600000);
+  return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate(), weekday: d.getUTCDay() || 7, hh: d.getUTCHours(), mm: d.getUTCMinutes() };
+}
+function shopTime(ms) {
+  const t = shopDate(ms);
+  return String(t.hh).padStart(2, "0") + ":" + String(t.mm).padStart(2, "0");
+}
+
+async function openingCheck(env, test) {
+  const now = Date.now();
+  const today = shopDate(now);
+  const dayLabel = today.y + "-" + String(today.m + 1).padStart(2, "0") + "-" + String(today.d).padStart(2, "0");
+  const days = (env.ALERT_DAYS || "1,2,3,4,5,6,7").split(",").map((s) => Number(s.trim()));
+  if (!test && days.indexOf(today.weekday) < 0) return { skipped: true, missing: [], sent: false };
+
+  const midnight = Date.UTC(today.y, today.m, today.d) - SHOP_UTC_OFFSET_HOURS * 3600000;
+  const rows = await firestore(env, "POST", ":runQuery", {
+    structuredQuery: {
+      from: [{ collectionId: "events" }],
+      where: { fieldFilter: { field: { fieldPath: "createdAt" }, op: "GREATER_THAN_OR_EQUAL", value: { timestampValue: new Date(midnight).toISOString() } } },
+      limit: 500
+    }
+  });
+  const events = (rows || []).filter((r) => r.document).map((r) => {
+    const f = r.document.fields || {};
+    const str = (k) => (f[k] && f[k].stringValue) || "";
+    const at = f.atMs && (f.atMs.integerValue || f.atMs.doubleValue);
+    return { type: str("type"), dir: str("dir"), name: str("employeeName"), at: at ? Number(at) : Date.parse((f.createdAt && f.createdAt.timestampValue) || "") };
+  });
+
+  const done = (type) => events.filter((e) => e.type === type && e.dir === "in");
+  const stockIn = done("stock"), cashIn = done("cash"), timeIn = done("time");
+  const missing = [];
+  if (!stockIn.length) missing.push("Stock-In");
+  if (!cashIn.length) missing.push("Cash-In");
+  if (!missing.length && !test) return { missing, sent: false };
+
+  const list = (arr) => arr.length ? arr.map((e) => e.name + " at " + shopTime(e.at)).join(", ") : "nothing yet";
+  const lines = [
+    missing.length
+      ? "By " + shopTime(now) + " today (" + dayLabel + ") these had NOT been logged in the Floor Log: " + missing.join(" and ") + "."
+      : "All good: Stock-In and Cash-In were both logged by " + shopTime(now) + " today (" + dayLabel + ").",
+    "",
+    "Stock-In: " + list(stockIn),
+    "Cash-In: " + list(cashIn),
+    "Time-In: " + list(timeIn)
+  ];
+  if (test) lines.unshift("TEST - this is a test of the morning alert. The real one is only sent when something is missing.", "");
+  const subject = (test ? "TEST - " : "") + "Biltong Floor Log - " + (missing.length ? missing.join(" and ") + " not done" : "opening check OK") + " - " + dayLabel;
+  await sendEmail(env, subject, lines.join("\n"));
+  return { missing, sent: true };
+}
+
+async function sendEmail(env, subject, message) {
+  if (!env.EMAILJS_PRIVATE_KEY) throw new HttpError(500, "EMAILJS_PRIVATE_KEY is not set");
+  const res = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Origin": env.ALLOWED_ORIGIN || "" },
+    body: JSON.stringify({
+      service_id: EMAILJS.serviceId,
+      template_id: EMAILJS.templateId,
+      user_id: EMAILJS.publicKey,
+      accessToken: env.EMAILJS_PRIVATE_KEY,
+      template_params: { subject, title: subject, name: "Biltong Floor Log", message }
+    })
+  });
+  if (!res.ok) throw new Error("EmailJS " + res.status + ": " + (await res.text()).slice(0, 200));
+}
 
 /* ============================== encoding helpers ============================== */
 
