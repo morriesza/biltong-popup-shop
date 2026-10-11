@@ -369,7 +369,7 @@
 
   // Bump on every change that ships. The app compares it with the live page
   // to offer a one-tap update (see checkForUpdate) and shows it under Manage.
-  var APP_VERSION = "2026-10-11.1";
+  var APP_VERSION = "2026-10-11.2";
 
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
@@ -1543,6 +1543,11 @@
         (cfgRaw ? '<button class="btn btn-ghost" id="btn-clear-email">Remove override</button>' : '') +
       '</div>' +
       '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" id="btn-test-email">Send test email</button>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="eyebrow">Morning alert</div>' +
+      '<p class="muted" style="font-size:12.5px;margin-top:6px;">Every day at 9:20am the shop\'s Cloudflare worker checks whether Stock-In and Cash-In have been logged, and emails you if either is missing. It runs on its own - nobody needs to have the app open. The test below checks right now and always sends an email (marked TEST) showing what it found.</p>' +
+      '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" id="btn-test-alert">Send test morning alert</button>' +
     '</div>';
   }
 
@@ -2165,6 +2170,19 @@
       try{ localStorage.removeItem(LS_EMAIL_CONFIG); }catch(e){}
       toast("Removed. Using the built-in setup, if any.");
       render();
+    });
+    var testAlert = document.getElementById("btn-test-alert");
+    if(testAlert) testAlert.addEventListener("click", function(){
+      if(!DB.isCloud()){ toast("Only works with the shared database"); return; }
+      toast("Running the morning check...");
+      DB.getIdToken().then(function(token){
+        return fetch(EMBEDDED_WORKER_URL.replace(/\/+$/, "") + "/opening-check", { method: "POST", headers: { "Authorization": "Bearer " + token } });
+      }).then(function(res){
+        return res.json().catch(function(){ return {}; }).then(function(json){
+          if(!res.ok || !json.ok) throw new Error(json.error || ("HTTP " + res.status));
+          toast("Test alert sent. " + (json.missing && json.missing.length ? "Missing now: " + json.missing.join(", ") : "Stock-In and Cash-In are both done today."));
+        });
+      }).catch(function(err){ toast("Morning alert test failed: " + err.message); });
     });
     var testEj = document.getElementById("btn-test-email");
     if(testEj) testEj.addEventListener("click", function(){

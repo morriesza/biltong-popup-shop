@@ -53,6 +53,15 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
   IDs to email anyone else. Template content should be `<div style="white-space:pre-wrap">{{message}}</div>` (double braces = escaped)
   so line breaks show; never use triple braces. The EmailJS private key is never needed by the app.
 
+## Morning alert (worker cron)
+- The worker has a Cron Trigger `20 23 * * *` (UTC) = 9:20am Brisbane (UTC+10, no DST; SHOP_UTC_OFFSET_HOURS in worker.js).
+  `scheduled()` reads today's events (createdAt >= Brisbane midnight) with the service account and, if no Stock-In or no Cash-In,
+  emails the owner via the EmailJS REST API using the same service/template (recipient fixed in the template).
+- Needs worker secret `EMAILJS_PRIVATE_KEY` and EmailJS Account -> Security "Allow EmailJS API for non-browser applications" ticked
+  (keep "Use Private Key" ticked). Optional `ALERT_DAYS` (1=Mon..7=Sun, default every day).
+- POST /opening-check (boss's Firebase ID token) runs it now and always emails (subject starts "TEST"); button under Manage ->
+  Email Reports.
+
 ## Square stock check
 - Square sells biltong by weight on the scale; all sales (cash too) go through Square. Tasters are NOT rung up - the app estimates them.
 - The worker (https://biltong-square.mroets.workers.dev) holds secrets `SQUARE_TOKEN` and `FIREBASE_SERVICE_ACCOUNT` (never in this repo,
@@ -91,6 +100,7 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 
 ## Open items / ideas
 - Confirm the first real end-of-day email arrives and looks right.
+- Morning alert: owner to redeploy worker, add EMAILJS_PRIVATE_KEY, tick EmailJS non-browser API, add the cron trigger, then test.
 - PIN login via the worker is live (Firebase Authentication on, FIREBASE_SERVICE_ACCOUNT set, firestore.rules published).
   PINs were publicly readable before this; owner advised to change all PINs (boss first).
 - Owner was walked through restricting the Firebase API key in Google Cloud Console (HTTP referrer = the GitHub Pages site, API = Firestore only);
