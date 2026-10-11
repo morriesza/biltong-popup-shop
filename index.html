@@ -369,7 +369,7 @@
 
   // Bump on every change that ships. The app compares it with the live page
   // to offer a one-tap update (see checkForUpdate) and shows it under Manage.
-  var APP_VERSION = "2026-10-09.1";
+  var APP_VERSION = "2026-10-11.1";
 
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
@@ -681,7 +681,7 @@
       lines.push("");
       lines.push("STOCK CHECK VS SQUARE (" + check.orders + " Square orders):");
       (check.rows||[]).forEach(function(r){
-        if(r.missingG == null){ lines.push("- " + r.name + ": sold " + fmtG(r.soldG) + " (no Stock-In today to compare)"); return; }
+        if(r.missingG == null){ lines.push("- " + r.name + ": sold " + fmtG(r.soldG) + " (no Stock-In and Stock-Out that day to compare)"); return; }
         lines.push("- " + r.name + ": sold " + fmtG(r.soldG) + ", missing " + fmtG(r.missingG) +
           " (drying " + (r.dryingG == null ? "not known yet" : "~" + fmtG(r.dryingG)) + ", tasters ~" + fmtG(r.tastersG) +
           (r.tasterCents != null ? " = " + fmtMoney(r.tasterCents/100) : "") + ")" +
@@ -869,7 +869,7 @@
   // Runs the check for a Stock-Out event and logs the result. Resolves to the
   // saved "sales" event, or null if Square is not set up or could not be read
   // (the Stock-Out itself is already saved either way).
-  function runStockCheck(outEvt){
+  function runStockCheck(outEvt, quiet){
     if(!getSquareConfig() || !outEvt) return Promise.resolve(null);
     var day = todayKey(new Date(outEvt.createdAt));
     var inEvt = state.events.find(function(e){
@@ -886,9 +886,69 @@
       return refreshEvents().then(function(){ return saved; });
     }).catch(function(err){
       console.error("Square stock check failed:", err);
-      toast("Stock saved, but Square sales could not be loaded");
+      if(!quiet) toast("Stock saved, but Square sales could not be loaded");
       return null;
     });
+  }
+
+  // The latest Stock-Out of a day ("YYYY-MM-DD"), or null.
+  function stockOutFor(day){
+    return state.events.find(function(e){ return e.type === "stock" && e.dir === "out" && todayKey(new Date(e.createdAt)) === day; }) || null;
+  }
+
+  // Runs (or re-runs) the check for any day. Without a Stock-Out that day it
+  // still records what Square sold (up to the end of that day, or now), just
+  // without the missing/drying/taster sums.
+  function checkDay(day, quiet){
+    var outEvt = stockOutFor(day);
+    if(!outEvt){
+      var p = day.split("-");
+      var endOfDay = new Date(+p[0], +p[1] - 1, +p[2] + 1).getTime() - 1;
+      outEvt = { id: null, createdAt: Math.min(endOfDay, Date.now()), readings: {} };
+    }
+    return runStockCheck(outEvt, quiet);
+  }
+
+  // Days in the last 14 with a Stock-Out but no check after it - e.g. Square
+  // was down, or the check never ran. Oldest first.
+  function stockCheckGaps(){
+    var since = todayKey(new Date(Date.now() - 13 * 86400000));
+    var days = [];
+    state.events.forEach(function(e){
+      if(e.type !== "stock" || e.dir !== "out") return;
+      var day = todayKey(new Date(e.createdAt));
+      if(day < since || days.indexOf(day) >= 0) return;
+      days.push(day);
+    });
+    return days.filter(function(day){
+      var check = latestStockCheck(day);
+      var out = stockOutFor(day);
+      // (5 minutes' slack for the device clock vs the server's timestamps)
+      return !check || (out && check.toMs < out.createdAt - 5 * 60000);
+    }).sort();
+  }
+
+  // Fills the gaps one day at a time when the boss opens Stock Check. Each
+  // day is only tried once per visit to the app, so a Square outage doesn't
+  // keep retrying.
+  var gapFill = { running: false, tried: {}, current: "" };
+  function fillStockCheckGaps(){
+    if(gapFill.running || !getSquareConfig()) return;
+    var todo = stockCheckGaps().filter(function(d){ return !gapFill.tried[d]; });
+    if(!todo.length) return;
+    gapFill.running = true;
+    var next = function(){
+      var day = todo.shift();
+      if(!day){
+        gapFill.running = false; gapFill.current = "";
+        if(state.screen === "admin-stockcheck") render();
+        return;
+      }
+      gapFill.tried[day] = true; gapFill.current = day;
+      if(state.screen === "admin-stockcheck") render();
+      checkDay(day, true).then(next, next);
+    };
+    next();
   }
 
   function latestStockCheck(day){
@@ -1704,7 +1764,7 @@
     return (check.rows||[]).map(function(r){
       var pill = r.flag === "short" ? '<span class="pill low">Check</span>' : (r.flag === "over" ? '<span class="pill pending">Check</span>' : (r.missingG == null ? '' : '<span class="pill open">OK</span>'));
       var sub = "Sold in Square " + fmtG(r.soldG);
-      if(r.missingG == null){ sub += " - no Stock-In today to compare"; }
+      if(r.missingG == null){ sub += " - no Stock-In and Stock-Out that day to compare"; }
       else if(detailed){
         sub += " - opened " + fmtG(r.openG) + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") + ", closed " + fmtG(r.closeG) +
           "<br>Missing " + fmtG(r.missingG) + ": drying " + (r.dryingG == null ? "not known yet" : "~" + fmtG(r.dryingG)) +
@@ -1749,7 +1809,10 @@
     state.events.forEach(function(e){
       if(e.type === "sales" && !byDay[e.day]){ byDay[e.day] = e; days.push(e.day); }
     });
-    days = days.slice(0, 14);
+    days = days.sort().reverse().slice(0, 14);
+    var gaps = stockCheckGaps();
+    var gapNote = gapFill.running ? '<p class="s" style="margin-top:10px;color:var(--warn);">Filling in missing days from Square... now doing '+escapeHtml(gapFill.current)+'</p>' :
+      (gaps.length ? '<p class="s" style="margin-top:10px;color:var(--warn);">Could not fill in: '+escapeHtml(gaps.join(", "))+'. Pick the day below and tap Check this day to try again.</p>' : '');
     var totals = { sold:0, tasters:0, tasterCents:0, drying:0, flagged:0 };
     days.slice(0, 7).forEach(function(d){
       var c = byDay[d];
@@ -1778,7 +1841,12 @@
     '<div class="card">' +
       '<p style="font-size:13.5px;">'+(cfg ? '<b style="color:var(--good);">Square is set up</b> - every Stock-Out is compared with Square sales since that day\'s Stock-In.' : '<b style="color:var(--warn);">Square is not set up yet</b> - Stock-Out works as normal without the check.')+'</p>' +
       '<p class="muted" style="font-size:12.5px;margin-top:8px;">Missing = opening + deliveries - sold in Square - closing. Drying is estimated from the overnight drop, so Stock-In must be a real weigh-in each morning. The rest is counted as tasters. A flavour is flagged when more than '+RECON_TOLERANCE_G+' g and '+RECON_TOLERANCE_PCT+'% of its sales goes missing beyond drying.</p>' +
-      (cfg ? '<div class="btnrow" style="margin-top:12px;"><button class="btn btn-primary" style="flex:1;" id="btn-run-stockcheck">Re-check today</button><button class="btn btn-ghost" id="btn-test-square">Test connection</button></div>' : '') +
+      (cfg ? '<p class="muted" style="font-size:12.5px;margin-top:8px;">Missed a day? Days with a Stock-Out but no check are filled in automatically when you open this screen. You can also check (or re-check) any day: pick it and tap Check this day. A day without a Stock-Out shows what Square sold only.</p>' +
+        '<div class="btnrow" style="margin-top:12px;gap:8px;">' +
+          '<div class="field" style="flex:1;"><input id="sc-day" type="date" value="'+todayKey()+'" max="'+todayKey()+'"></div>' +
+          '<button class="btn btn-primary" id="btn-run-stockcheck"'+(gapFill.running?' disabled':'')+'>Check this day</button>' +
+        '</div>' +
+        '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" id="btn-test-square">Test connection</button>' + gapNote : '') +
     '</div>' +
     summary + dayCards;
   }
@@ -2061,13 +2129,14 @@
     });
 
     // Admin: re-run today's stock check against Square
+    if(state.screen === "admin-stockcheck") setTimeout(fillStockCheckGaps, 0);
     var rerun = document.getElementById("btn-run-stockcheck");
     if(rerun) rerun.addEventListener("click", function(){
-      var day = todayKey();
-      var outEvt = state.events.find(function(e){ return e.type === "stock" && e.dir === "out" && todayKey(new Date(e.createdAt)) === day; });
-      if(!outEvt){ toast("No Stock-Out logged today yet"); return; }
-      toast("Checking against Square sales...");
-      runStockCheck(outEvt).then(function(check){ if(check){ toast("Stock check saved"); } render(); });
+      var day = document.getElementById("sc-day").value;
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(day)){ toast("Pick a day first"); return; }
+      if(day > todayKey()){ toast("That day hasn't happened yet"); return; }
+      toast("Checking " + day + " against Square sales...");
+      checkDay(day).then(function(check){ if(check){ toast("Stock check saved for " + day); } render(); });
     });
     var testSq = document.getElementById("btn-test-square");
     if(testSq) testSq.addEventListener("click", function(){
