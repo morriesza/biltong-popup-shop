@@ -65,6 +65,9 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
   tasters = missing - drying. Flag when unexplained > RECON_TOLERANCE_G and > RECON_TOLERANCE_PCT of sold, or over by RECON_OVER_G.
 - Square items match flavours by name (item, variation or both; case/punctuation ignored) or the flavour's `squareName` override.
 - Screens: `stockcheck` (shown after Stock-Out; staff see sold + re-weigh prompts) and Manage -> Stock Check (boss detail, 7-day totals).
+- Gaps: opening Manage -> Stock Check fills in, one by one, any day in the last 14 with a Stock-Out but no check after it
+  (stockCheckGaps/fillStockCheckGaps, each day tried once per app session). The boss can also check any chosen day (checkDay):
+  without a Stock-Out that day it records Square sales only (no missing/drying/taster sums).
 - Manage -> Weekly Sales (boss): live Square sales for a Monday-Sunday week, grouped per flavour (grams, $, avg $/kg, share) and
   per day, with previous/next week. Fetched one day per /sales call (worker max window is 36 h), nothing saved.
   Amounts are Square gross sales (before discounts). The end-of-day email also includes this week's Square sales per flavour
