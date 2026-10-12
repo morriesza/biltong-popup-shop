@@ -23,7 +23,7 @@
 //        Firebase sign-in token. Staff PINs never leave the database, and
 //        wrong guesses are rate limited (per device and overall).
 //   GET  /status                      (signed in) -> { ok, locations }
-//   GET  /sales?from=<ISO>&to=<ISO>   (signed in) -> { ok, orders, items, unweighed }
+//   GET  /sales?from=<ISO>&to=<ISO>   (signed in) -> { ok, orders, cashCents, items, unweighed }
 //        Grams sold (and sales cents) per Square item for a time window -
 //        no customer, card or payment details.
 //   POST /opening-check   (boss) -> { ok, missing, sent }
@@ -410,6 +410,7 @@ async function salesSummary(env, from, to) {
   const items = {};
   const unweighed = {};
   let orders = 0;
+  let cashCents = 0;
 
   const add = (li, sign, money) => {
     const name = li.name || "Unnamed item";
@@ -446,6 +447,14 @@ async function salesSummary(env, from, to) {
       (o.returns || []).forEach((r) => {
         (r.return_line_items || []).forEach((li) => add(li, -1, li.gross_return_money));
       });
+      // Cash taken into the till (amount applied to the order, so change
+      // given back is already excluded), less cash refunds.
+      const cashTenders = (o.tenders || []).filter((t) => t.type === "CASH");
+      cashTenders.forEach((t) => { cashCents += (t.amount_money && t.amount_money.amount) || 0; });
+      (o.refunds || []).forEach((rf) => {
+        if (rf.status === "FAILED" || rf.status === "REJECTED") return;
+        if (cashTenders.some((t) => t.id === rf.tender_id)) cashCents -= (rf.amount_money && rf.amount_money.amount) || 0;
+      });
     });
     cursor = page.cursor;
   } while (cursor);
@@ -453,6 +462,7 @@ async function salesSummary(env, from, to) {
   const round = (o) => Object.assign({}, o, o.grams != null ? { grams: Math.round(o.grams * 10) / 10 } : {});
   return {
     orders,
+    cashCents,
     items: Object.values(items).map(round),
     unweighed: Object.values(unweighed)
   };

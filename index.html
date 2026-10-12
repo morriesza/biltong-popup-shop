@@ -351,6 +351,10 @@
   var RECON_TOLERANCE_PCT = 15;
   var RECON_OVER_G = 50;
 
+  // The till is flagged when the counted cash is this many dollars or more
+  // away from what it should be.
+  var CASH_TOLERANCE = 5;
+
   // Cash is counted note-by-note and coin-by-coin rather than as one typed
   // total, so a miscount is easy to spot and the exact tally is on record.
   var DENOMINATIONS = [
@@ -369,7 +373,7 @@
 
   // Bump on every change that ships. The app compares it with the live page
   // to offer a one-tap update (see checkForUpdate) and shows it under Manage.
-  var APP_VERSION = "2026-10-12.2";
+  var APP_VERSION = "2026-10-12.3";
 
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
@@ -657,11 +661,12 @@
     });
     lines.push("");
     lines.push("CASH TODAY:");
-    var todaysCash = state.events.filter(function(e){ return e.type === "cash" && todayKey(new Date(e.createdAt)) === day; });
+    var todaysCash = state.events.filter(function(e){ return (e.type === "cash" || e.type === "cashpickup") && todayKey(new Date(e.createdAt)) === day; });
     if(todaysCash.length){
       todaysCash.slice().reverse().forEach(function(e){
         var bd = formatCashBreakdown(e.breakdown);
-        lines.push("- " + (e.dir==="in"?"Cash-In":"Cash-Out") + " by " + e.employeeName + ": " + fmtMoney(e.amount||0) + " at " + fmtTime(e.createdAt) + (bd ? " [" + bd + "]" : ""));
+        var what = e.type === "cashpickup" ? "Cash pickup" : (e.dir==="in"?"Cash-In":"Cash-Out");
+        lines.push("- " + what + " by " + e.employeeName + ": " + fmtMoney(e.amount||0) + " at " + fmtTime(e.createdAt) + (bd ? " [" + bd + "]" : "") + (e.note ? " - " + e.note : ""));
       });
     } else {
       lines.push("- No cash events logged today.");
@@ -732,7 +737,11 @@
       console.error("Weekly sales for email failed:", err);
       return "\n\nSQUARE SALES THIS WEEK:\n- Could not be loaded from Square (" + ((err && err.message) || "error") + ").";
     }) : Promise.resolve("");
-    return weekPart.then(function(week){
+    var cashPart = Promise.resolve(getSquareConfig() ? squareGet("/sales?from=" + encodeURIComponent(new Date(new Date().setHours(0,0,0,0)).toISOString()) + "&to=" + encodeURIComponent(new Date().toISOString())).catch(function(){ return null; }) : null).then(function(sales){
+      return buildCashCheckText(todayKey(), sales && sales.cashCents != null ? sales.cashCents : null);
+    });
+    return Promise.all([weekPart, cashPart]).then(function(parts){
+      var week = parts[1] + parts[0];
       var params = {
         subject: subject,
         title: subject,
@@ -1121,6 +1130,7 @@
 
   function go(screen, data){
     // Weekly sales is a live look at Square: start fresh at this week each visit.
+    if(screen === "admin-cashlog" && state.screen !== "admin-cashlog"){ cashlog.data = null; cashlog.error = ""; }
     if(screen === "admin-weekly" && state.screen !== "admin-weekly"){ weekly.offset = 0; weekly.data = null; weekly.error = ""; weekly.key = null; }
     state.screen = screen;
     state.formData = data || {};
@@ -1191,6 +1201,8 @@
       case "admin-stockcheck": html += renderAdminStockCheck(); break;
       case "admin-hours": html += renderAdminHours(); break;
       case "admin-weekly": html += renderAdminWeekly(); break;
+      case "admin-cashlog": html += renderAdminCashLog(); break;
+      case "cashpickup": html += renderCashPickup(); break;
       case "stockcheck": html += renderStockCheckResult(); break;
       case "restock": html += renderRestock(); break;
       default: html += renderHome();
@@ -1265,7 +1277,9 @@
     '<div class="tiles">' +
       '<button class="tile time" data-go="restock"><div class="glyph">'+svgIcon("restock")+'</div><div><div class="lbl">Stock Delivery</div><div class="sub">Log new stock arrived</div></div></button>' +
     '</div>' +
-    (state.employee.isAdmin ? '<div class="section-title"><h2 class="eyebrow">Boss</h2></div><div class="tiles"><button class="tile time" data-go="admin"><div class="glyph">'+svgIcon("admin")+'</div><div><div class="lbl">Manage</div><div class="sub">Flavours, thresholds, staff, log</div></div></button></div>' : '');
+    (state.employee.isAdmin ? '<div class="section-title"><h2 class="eyebrow">Boss</h2></div><div class="tiles">' +
+      '<button class="tile cash out" data-go="cashpickup"><div class="glyph">'+svgIcon("cashOut")+'</div><div><div class="lbl">Cash Pickup</div><div class="sub">Take money out of the till</div></div></button>' +
+      '<button class="tile time" data-go="admin"><div class="glyph">'+svgIcon("admin")+'</div><div><div class="lbl">Manage</div><div class="sub">Flavours, thresholds, staff, log</div></div></button></div>' : '');
   }
 
   function tile(kind, dir, icon, label, sub){
@@ -1392,6 +1406,7 @@
       '<button class="tile time" data-go="admin-log"><div class="glyph">'+svgIcon("clockIn")+'</div><div><div class="lbl">Activity log</div><div class="sub">All check-ins</div></div></button>' +
       '<button class="tile time" data-go="admin-stocklog"><div class="glyph">'+svgIcon("scaleOut")+'</div><div><div class="lbl">Stock Log</div><div class="sub">Trends & deliveries</div></div></button>' +
       '<button class="tile time" data-go="admin-stockcheck"><div class="glyph">'+svgIcon("scaleIn")+'</div><div><div class="lbl">Stock Check</div><div class="sub">'+(getSquareConfig()?"Weigh-ins vs Square sales":"Square not set up")+'</div></div></button>' +
+      '<button class="tile time" data-go="admin-cashlog"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Cash Log</div><div class="sub">Float, pickups, till check</div></div></button>' +
       '<button class="tile time" data-go="admin-weekly"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Weekly Sales</div><div class="sub">'+(getSquareConfig()?"Square sales per flavour, Mon-Sun":"Square not set up")+'</div></div></button>' +
       '<button class="tile time" data-go="admin-email"><div class="glyph">'+svgIcon("cashOut")+'</div><div><div class="lbl">Email Reports</div><div class="sub">'+(getEmailConfig()?"Configured":"Not set up")+'</div></div></button>' +
       '<button class="tile time" data-go="admin-connect"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Database</div><div class="sub">'+(DB.isCloud()?"Connected":"Demo mode")+'</div></div></button>' +
@@ -1476,6 +1491,11 @@
         var bd = formatCashBreakdown(e.breakdown);
         label = "Cash-"+(e.dir==="in"?"In":"Out"); detail = e.employeeName + " - " + fmtMoney(e.amount||0) + (bd ? " (" + bd + ")" : "");
         color = "var(--good)";
+      }
+      if(e.type === "cashpickup"){
+        var pbd = formatCashBreakdown(e.breakdown);
+        label = "Cash Pickup"; detail = e.employeeName + " took " + fmtMoney(e.amount||0) + (pbd ? " (" + pbd + ")" : "") + (e.note ? " - " + e.note : "");
+        color = "var(--warn)";
       }
       if(e.type === "stock"){
         var low = (e.flagged||[]).length;
@@ -1612,6 +1632,7 @@
       days.forEach(function(d, i){
         var res = results[i];
         d.grams = 0; d.cents = 0; d.orders = res ? (res.orders || 0) : 0;
+        d.cashCents = res && res.cashCents != null ? res.cashCents : null;
         if(!res) return;
         (res.items || []).forEach(function(it){
           var f = matchFlavour(it);
@@ -1701,6 +1722,150 @@
       '</div>' +
       '<div class="card"><div class="eyebrow">Per flavour</div><div style="padding-block:4px;">'+flavourRows+'</div>'+extras+'</div>' +
       '<div class="card"><div class="eyebrow">Per day</div><div style="padding-block:4px;">'+dayRows+'</div></div>';
+  }
+
+  /* ---- Cash: pickups and till check ---- */
+  // The boss can take cash out of the till during the day (a "cash pickup"),
+  // so it doesn't pile up. Each pickup is counted note by note and saved as
+  // an append-only "cashpickup" event. The till is then checked:
+  //   expected at Cash-Out = float (Cash-In) + Square cash sales - pickups
+  //                          taken before Cash-Out
+  // and overnight:
+  //   expected float = last Cash-Out - pickups taken after it.
+  function cashDay(day){
+    var evs = state.events.filter(function(e){ return (e.type === "cash" || e.type === "cashpickup") && todayKey(new Date(e.createdAt)) === day; });
+    var cashIn = evs.find(function(e){ return e.type === "cash" && e.dir === "in"; }) || null;   // latest
+    var cashOut = evs.find(function(e){ return e.type === "cash" && e.dir === "out"; }) || null; // latest
+    var pickups = evs.filter(function(e){ return e.type === "cashpickup"; }).slice().reverse();
+    var before = 0, after = 0;
+    pickups.forEach(function(p){
+      if(cashOut && p.createdAt > cashOut.createdAt) after += p.amount || 0; else before += p.amount || 0;
+    });
+    var overnight = null;
+    if(cashIn){
+      var prevOut = state.events.find(function(e){ return e.type === "cash" && e.dir === "out" && e.createdAt < cashIn.createdAt && todayKey(new Date(e.createdAt)) !== day; });
+      if(prevOut){
+        var taken = 0;
+        state.events.forEach(function(e){ if(e.type === "cashpickup" && e.createdAt > prevOut.createdAt && e.createdAt < cashIn.createdAt) taken += e.amount || 0; });
+        var expectedFloat = (prevOut.amount || 0) - taken;
+        overnight = { closed: prevOut.amount || 0, closedAt: prevOut.createdAt, taken: taken, expected: expectedFloat, diff: Math.round(((cashIn.amount || 0) - expectedFloat) * 100) / 100 };
+      }
+    }
+    return { day: day, cashIn: cashIn, cashOut: cashOut, pickups: pickups, pickedBefore: before, pickedAfter: after, overnight: overnight };
+  }
+  function cashExpected(cd, squareCashCents){
+    if(!cd.cashIn || squareCashCents == null) return null;
+    return Math.round(((cd.cashIn.amount || 0) + squareCashCents / 100 - cd.pickedBefore) * 100) / 100;
+  }
+  function cashDiffLabel(diff){
+    if(Math.abs(diff) < CASH_TOLERANCE) return "OK";
+    return diff < 0 ? fmtMoney(-diff) + " SHORT" : fmtMoney(diff) + " OVER";
+  }
+
+  function buildCashCheckText(day, squareCashCents){
+    var cd = cashDay(day);
+    var lines = ["", "", "CASH CHECK:"];
+    if(cd.overnight){
+      lines.push("- Overnight: closed " + fmtMoney(cd.overnight.closed) + (cd.overnight.taken ? ", taken out after close " + fmtMoney(cd.overnight.taken) : "") +
+        ", so the float should be " + fmtMoney(cd.overnight.expected) + "; counted " + fmtMoney(cd.cashIn.amount || 0) + " - " + cashDiffLabel(cd.overnight.diff));
+    }
+    lines.push("- Float (Cash-In): " + (cd.cashIn ? fmtMoney(cd.cashIn.amount || 0) : "not logged"));
+    lines.push("- Cash sales in Square: " + (squareCashCents != null ? fmtMoney(squareCashCents / 100) : "not available"));
+    lines.push("- Cash pickups: " + (cd.pickups.length ? fmtMoney(cd.pickedBefore + cd.pickedAfter) + " (" + cd.pickups.map(function(p){ return fmtMoney(p.amount || 0) + " by " + p.employeeName + " at " + fmtTime(p.createdAt); }).join(", ") + ")" : "none"));
+    var expected = cashExpected(cd, squareCashCents);
+    if(expected != null) lines.push("- Expected in till at Cash-Out: " + fmtMoney(expected));
+    if(cd.cashOut){
+      lines.push("- Counted at Cash-Out: " + fmtMoney(cd.cashOut.amount || 0) + (expected != null ? " - " + cashDiffLabel(Math.round(((cd.cashOut.amount || 0) - expected) * 100) / 100) : ""));
+    }
+    if(cd.pickedAfter) lines.push("- Taken out after Cash-Out: " + fmtMoney(cd.pickedAfter));
+    return lines.join("\n");
+  }
+
+  function renderCashPickup(){
+    if(!state.employee.isAdmin) return backRow("Home") + '<div class="card empty">Only the boss can record a cash pickup.</div>';
+    var rows = DENOMINATIONS.map(function(d){
+      return '<div class="weigh-row" data-denom="'+d.key+'" data-value="'+d.value+'">' +
+        '<div class="name">'+d.label+'</div>' +
+        '<input type="number" inputmode="numeric" min="0" class="tabular denom-input" placeholder="0" value="">' +
+        '<div class="unit">x</div>' +
+      '</div>';
+    }).join("");
+    return backRow("Home") +
+    '<div class="card">' +
+      '<div class="eyebrow">Cash Pickup</div>' +
+      '<h1 style="font-size:19px;margin-top:6px;">Take money out of the till</h1>' +
+      '<p class="muted" style="font-size:13px;margin-top:6px;">Count what you are taking, note by note. It is saved permanently and taken off what should be in the till at Cash-Out.</p>' +
+    '</div>' +
+    '<div class="card" style="padding-block:4px;">' + rows + '</div>' +
+    '<div class="card" style="text-align:center;padding:18px;">' +
+      '<div class="eyebrow">Taking out</div>' +
+      '<div class="tabular" id="cash-total" style="font-family:\'Oswald\';font-size:30px;font-weight:600;margin-top:4px;">$0.00</div>' +
+    '</div>' +
+    '<div class="card"><div class="field"><label>Reason (optional)</label><input id="pickup-note" placeholder="e.g. banking, change run"></div></div>' +
+    '<button class="btn btn-primary" style="width:100%;" id="btn-submit-pickup">Save cash pickup</button>';
+  }
+
+  var cashlog = { loading: false, data: null, error: "" };
+  function loadCashLog(){
+    cashlog.loading = true; cashlog.error = ""; cashlog.data = null;
+    var now = new Date(); var days = [];
+    for(var i = 0; i < 7; i++){
+      var from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      var to = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i + 1);
+      days.push({ day: todayKey(from), fromMs: from.getTime(), toMs: Math.min(to.getTime(), Date.now()) });
+    }
+    return Promise.all(days.map(function(d){
+      if(!getSquareConfig()) return Promise.resolve(null);
+      return squareGet("/sales?from=" + encodeURIComponent(new Date(d.fromMs).toISOString()) + "&to=" + encodeURIComponent(new Date(d.toMs).toISOString())).catch(function(){ return null; });
+    })).then(function(results){
+      var data = {};
+      days.forEach(function(d, i){ data[d.day] = results[i] && results[i].cashCents != null ? results[i].cashCents : null; });
+      cashlog.data = data;
+    }).catch(function(err){
+      cashlog.error = (err && err.message) || "Could not load";
+    }).then(function(){
+      cashlog.loading = false;
+      if(state.screen === "admin-cashlog") render();
+    });
+  }
+
+  function renderAdminCashLog(){
+    var head = backRow("Manage") + '<h1 style="font-size:20px;">Cash log</h1>' +
+      '<div class="card"><p class="muted" style="font-size:12.5px;">Expected in the till at Cash-Out = float + cash sales in Square - cash pickups. Overnight, the next float should match the last Cash-Out less anything taken out after it. Differences of '+fmtMoney(CASH_TOLERANCE)+' or more are flagged.</p>' +
+      '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" data-go="cashpickup">Record a cash pickup</button></div>';
+    if(cashlog.loading || !cashlog.data) return head + '<div class="card empty">Loading cash sales from Square...</div>';
+    var now = new Date(); var cards = [];
+    for(var i = 0; i < 7; i++){
+      var day = todayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i));
+      var cd = cashDay(day);
+      var sq = cashlog.data[day];
+      if(!cd.cashIn && !cd.cashOut && !cd.pickups.length && !sq) continue;
+      var row = function(label, value, extra){
+        return '<div class="list-row"><div class="main"><div class="t" style="font-size:13.5px;">'+label+'</div>'+(extra ? '<div class="s">'+extra+'</div>' : '')+'</div><div class="tabular" style="text-align:right;">'+value+'</div></div>';
+      };
+      var pill = function(diff){
+        var lbl = cashDiffLabel(diff);
+        return lbl === "OK" ? ' <span class="pill open">OK</span>' : ' <span class="pill low">'+escapeHtml(lbl)+'</span>';
+      };
+      var html = "";
+      if(cd.overnight){
+        html += row("Overnight", fmtMoney(cd.cashIn.amount || 0) + pill(cd.overnight.diff),
+          "Closed "+fmtMoney(cd.overnight.closed)+(cd.overnight.taken ? ", "+fmtMoney(cd.overnight.taken)+" taken out after" : "")+" - float should be "+fmtMoney(cd.overnight.expected));
+      }
+      html += row("Float (Cash-In)", cd.cashIn ? fmtMoney(cd.cashIn.amount || 0) : '<span class="muted">not logged</span>', cd.cashIn ? escapeHtml(cd.cashIn.employeeName)+' at '+fmtTime(cd.cashIn.createdAt) : '');
+      html += row("Cash sales in Square", sq != null ? fmtMoney(sq / 100) : '<span class="muted">-</span>');
+      cd.pickups.forEach(function(p){
+        var late = cd.cashOut && p.createdAt > cd.cashOut.createdAt;
+        html += row("Cash pickup"+(late ? " (after Cash-Out)" : ""), "- "+fmtMoney(p.amount || 0), escapeHtml(p.employeeName)+" at "+fmtTime(p.createdAt)+(p.note ? " - "+escapeHtml(p.note) : ""));
+      });
+      var expected = cashExpected(cd, sq);
+      if(expected != null) html += row("Expected at Cash-Out", fmtMoney(expected));
+      if(cd.cashOut){
+        html += row("Counted at Cash-Out", fmtMoney(cd.cashOut.amount || 0) + (expected != null ? pill(Math.round(((cd.cashOut.amount || 0) - expected) * 100) / 100) : ''), escapeHtml(cd.cashOut.employeeName)+' at '+fmtTime(cd.cashOut.createdAt));
+      }
+      cards.push('<div class="card" style="margin-top:12px;"><div class="eyebrow">'+day+(i===0?' - today':'')+'</div><div style="padding-block:4px;">'+html+'</div></div>');
+    }
+    return head + (cards.join("") || '<div class="card empty">No cash logged in the last 7 days.</div>');
   }
 
   /* ---- Staff hours ---- */
@@ -2126,6 +2291,29 @@
         return refreshAll();
       }).then(function(){ go("home"); }).catch(reportSaveError);
     });
+
+    // Cash pickup (boss)
+    var subP = document.getElementById("btn-submit-pickup");
+    if(subP) subP.addEventListener("click", function(){
+      var breakdown = {};
+      document.querySelectorAll(".weigh-row[data-denom]").forEach(function(row){
+        var count = parseInt(row.querySelector(".denom-input").value, 10) || 0;
+        if(count > 0) breakdown[row.getAttribute("data-denom")] = count;
+      });
+      var amt = computeCashTotal();
+      if(amt <= 0){ toast("Enter at least one note or coin"); return; }
+      var note = document.getElementById("pickup-note").value.trim();
+      subP.disabled = true;
+      DB.logEvent({ type:"cashpickup", employeeId:state.employee.id, employeeName:state.employee.name, amount:amt, breakdown:breakdown, note:note }).then(function(){
+        toast("Cash pickup saved: "+fmtMoney(amt));
+        return refreshEvents();
+      }).then(function(){ go("home"); }).catch(function(err){ subP.disabled = false; reportSaveError(err); });
+    });
+
+    // Admin: cash log
+    if(state.screen === "admin-cashlog" && !cashlog.loading && !cashlog.data && !cashlog.error){
+      loadCashLog(); render(); return;
+    }
 
     // Admin: weekly sales
     if(state.screen === "admin-weekly" && getSquareConfig() && !weekly.loading && (!weekly.data || weekly.key !== todayKey(weekStart(weekly.offset))) && !weekly.error){

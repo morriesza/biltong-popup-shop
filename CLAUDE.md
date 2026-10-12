@@ -23,18 +23,23 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 - Cash is counted per denomination (AUD: $100, $50, $20, $10, $5, $2, $1, 50c, 20c, 10c, 5c); total is calculated live; breakdown is saved on the event.
 - Stock is weighed in grams per flavour. Flavours have low-stock thresholds; a red banner shows when any flavour is at or below threshold.
 - Boss (isAdmin) gets Manage: Flavours, Staff, Staff Hours, Activity log, Stock Log (closing-stock trend per flavour + deliveries),
-  Stock Check, Weekly Sales, Email Reports, Database.
+  Stock Check, Weekly Sales, Cash Log, Email Reports, Database. Boss also gets a Cash Pickup tile on Home.
 - Staff Hours: one shift per person per day (earliest Time-In, latest Time-Out; boss-added entries win, latest added counts),
   hours per day and 7-day totals, "Missing - add" for gaps. The boss can add a missed Time-In/Out for anyone: a new `time` event
   with `atMs` (the real time), `manual: true`, `enteredById`/`enteredByName` (the boss) and optional `note`. Use `eventTime(e)`
   (atMs || createdAt) wherever a time entry's time matters.
-- Captured events (time/cash/stock/restock) are an append-only audit trail. The UI never offers edit or delete for them.
+- Cash pickups: the boss records cash taken out of the till (counted per denomination + optional note) as a `cashpickup` event
+  (amount, breakdown, note). Till check per day (cashDay/cashExpected): expected at Cash-Out = latest Cash-In float + Square cash
+  sales (whole day, worker `cashCents`) - pickups before Cash-Out; overnight: next float should = last Cash-Out - pickups after it.
+  Differences >= CASH_TOLERANCE ($5) are flagged SHORT/OVER. Shown in Manage -> Cash Log (last 7 days) and the end-of-day email
+  (CASH CHECK). Staff never see the expected amount (blind count).
+- Captured events (time/cash/stock/restock/cashpickup) are an append-only audit trail. The UI never offers edit or delete for them.
   Firestore rules enforce `allow update, delete: if false` on `events`. Corrections are new entries.
 
 ## Data (Firebase Firestore, project biltong-popup-toowong)
 - Collections: `employees`, `flavours`, `events`, `loginGuard` (worker only; closed to the app).
 - Event types: `time` (dir; boss-added ones also atMs, manual, enteredById, enteredByName, note), `cash` (amount + breakdown), `stock` (readings map, flagged list), `restock` (flavourId, flavourName, amountG, note),
-  `sales` (Square stock check: day, orders, rows, unmatched, unweighed, flagged).
+  `sales` (Square stock check: day, orders, rows, unmatched, unweighed, flagged), `cashpickup` (amount, breakdown, note).
 - The Firebase web config is embedded in `index.html` (EMBEDDED_FIREBASE_CONFIG) on purpose: it is not a secret, staff must never have
   to paste credentials on their own phones, and the real protection is the Firestore security rules (`firestore.rules`):
   signed-in staff only (and their employees doc must still exist), events append-only and stamped with their own uid
@@ -66,7 +71,8 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 - Square sells biltong by weight on the scale; all sales (cash too) go through Square. Tasters are NOT rung up - the app estimates them.
 - The worker (https://biltong-square.mroets.workers.dev) holds secrets `SQUARE_TOKEN` and `FIREBASE_SERVICE_ACCOUNT` (never in this repo,
   never in chat), plus `ALLOWED_ORIGIN` = https://morriesza.github.io and optional `LOCATION_IDS`. /sales and /status need the app's
-  Firebase ID token (verified against Google's keys). It returns only grams/cents per item.
+  Firebase ID token (verified against Google's keys). It returns only grams/cents per item, plus `cashCents` (Square CASH tenders
+  less cash refunds) for the till check. Older deployed workers lack cashCents -> app shows "not available".
 - App config: `EMBEDDED_WORKER_URL` (login + Square) and `EMBEDDED_SQUARE_CONFIG = { salesUrl: EMBEDDED_WORKER_URL }` (null = check skipped).
   The worker URL is not a secret.
 - At Stock-Out the app fetches that day's Square sales (whole day) and logs a `sales` event (append-only) with per-flavour rows:
@@ -106,6 +112,7 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 
 ## Open items / ideas
 - Confirm the first real end-of-day email arrives and looks right.
+- Cash till check needs the worker redeployed with cashCents (same redeploy as the morning alert).
 - Morning alert: owner to redeploy worker, add EMAILJS_PRIVATE_KEY, tick EmailJS non-browser API, add the cron trigger, then test.
 - PIN login via the worker is live (Firebase Authentication on, FIREBASE_SERVICE_ACCOUNT set, firestore.rules published).
   PINs were publicly readable before this; owner advised to change all PINs (boss first).
