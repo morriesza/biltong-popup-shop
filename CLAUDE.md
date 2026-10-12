@@ -72,6 +72,9 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 - At Stock-Out the app fetches sales since that day's Stock-In and logs a `sales` event (append-only) with per-flavour rows:
   missing = open + deliveries - sold - close; drying estimated from the overnight drop (Stock-Out -> next Stock-In, avg of last 10 nights);
   tasters = missing - drying. Flag when unexplained > RECON_TOLERANCE_G and > RECON_TOLERANCE_PCT of sold, or over by RECON_OVER_G.
+- The stock sums use only Square sales between that day's Stock-In and Stock-Out (sales outside that window don't change the
+  weighed stock). Each check also fetches the whole day: rows store `daySoldG` (check `dayOrders`), and the screens/email show
+  "X g between Stock-In and Stock-Out (Y g all day)" plus a warning when sales happened outside the window. Old checks lack these.
 - Square items match flavours by name (item, variation or both; case/punctuation ignored) or the flavour's `squareName` override.
 - Screens: `stockcheck` (shown after Stock-Out; staff see sold + re-weigh prompts) and Manage -> Stock Check (boss detail, 7-day totals).
 - Gaps: opening Manage -> Stock Check fills in, one by one, any day in the last 14 with a Stock-Out but no check after it
