@@ -69,15 +69,18 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
   Firebase ID token (verified against Google's keys). It returns only grams/cents per item.
 - App config: `EMBEDDED_WORKER_URL` (login + Square) and `EMBEDDED_SQUARE_CONFIG = { salesUrl: EMBEDDED_WORKER_URL }` (null = check skipped).
   The worker URL is not a secret.
-- At Stock-Out the app fetches sales since that day's Stock-In and logs a `sales` event (append-only) with per-flavour rows:
+- At Stock-Out the app fetches that day's Square sales (whole day) and logs a `sales` event (append-only) with per-flavour rows:
   missing = open + deliveries - sold - close; drying estimated from the overnight drop (Stock-Out -> next Stock-In, avg of last 10 nights);
   tasters = missing - drying. Flag when unexplained > RECON_TOLERANCE_G and > RECON_TOLERANCE_PCT of sold, or over by RECON_OVER_G.
-- The stock sums use only Square sales between that day's Stock-In and Stock-Out (sales outside that window don't change the
-  weighed stock). Each check also fetches the whole day: rows store `daySoldG` (check `dayOrders`), and the screens/email show
-  "X g between Stock-In and Stock-Out (Y g all day)" plus a warning when sales happened outside the window. Old checks lack these.
+- OWNER DECISION: stock checks always use the WHOLE DAY's Square sales (local midnight to midnight, or to now for today), never
+  the Stock-In to Stock-Out window - staff timing can't be relied on. New checks have `wholeDay: true`, fromMs/toMs = the day.
+  Past days whose check isn't a complete whole day (older window-based checks, or checked mid-day) count as gaps and are redone
+  when Stock Check opens. Sales before Stock-In/after Stock-Out now show up as "more on the scale than expected" (flag "over").
+  Older window-based checks may carry `daySoldG`/`dayOrders`; the display still handles them.
 - Square items match flavours by name (item, variation or both; case/punctuation ignored) or the flavour's `squareName` override.
 - Screens: `stockcheck` (shown after Stock-Out; staff see sold + re-weigh prompts) and Manage -> Stock Check (boss detail, 7-day totals).
-- Gaps: opening Manage -> Stock Check fills in, one by one, any day in the last 14 with a Stock-Out but no check after it
+- Gaps: opening Manage -> Stock Check fills in, one by one, any day in the last 14 with a Stock-Out but no check after it,
+  or a finished day whose check isn't a complete whole day
   (stockCheckGaps/fillStockCheckGaps, each day tried once per app session). The boss can also check any chosen day (checkDay):
   without a Stock-Out that day it records Square sales only (no missing/drying/taster sums).
 - Manage -> Weekly Sales (boss): live Square sales for a Monday-Sunday week, grouped per flavour (grams, $, avg $/kg, share) and
