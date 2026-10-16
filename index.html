@@ -373,7 +373,7 @@
 
   // Bump on every change that ships. The app compares it with the live page
   // to offer a one-tap update (see checkForUpdate) and shows it under Manage.
-  var APP_VERSION = "2026-10-16.1";
+  var APP_VERSION = "2026-10-16.2";
 
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
@@ -685,9 +685,10 @@
     if(check){
       lines.push("");
       lines.push("STOCK CHECK VS SQUARE (" + check.orders + " Square orders, " + (check.wholeDay ? "whole day up to " + fmtTime(check.toMs) : "from " + fmtTime(check.fromMs) + " Stock-In to " + fmtTime(check.toMs) + " Stock-Out") + "):");
-      (check.rows||[]).forEach(function(r){
+      (check.rows||[]).forEach(function(r0){
+        var r = rowForDisplay(r0, check);
         if(r.missingG == null){
-          lines.push("- " + r.name + ": sold " + fmtG(r.soldG) + (r.expectedCloseG != null ? ", opened " + fmtG(r.openG) + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") + ", so about " + fmtG(r.expectedCloseG) + " should be left (not weighed at close)" : " (no weigh-in to compare)"));
+          lines.push("- " + r.name + ": sold " + fmtG(r.soldG) + (r.expectedCloseG != null ? ", opened " + fmtG(r.openG) + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") + ", so about " + fmtG(r.expectedCloseG) + " should be left (not weighed at close)" : " (no stock level recorded yet)"));
           return;
         }
         lines.push("- " + r.name + ": sold " + fmtG(r.soldG) + (r.daySoldG != null && r.daySoldG - r.soldG >= 10 ? " between Stock-In and Stock-Out (" + fmtG(r.daySoldG) + " all day)" : "") + ", missing " + fmtG(r.missingG) +
@@ -826,6 +827,39 @@
   // `sales` covers Stock-In to Stock-Out (what the stock sums use); `daySales`
   // (optional) covers the whole day, so sales rung up before Stock-In or after
   // Stock-Out can be shown and flagged rather than silently left out.
+  // Opening stock for a flavour on a day: that day's Stock-In, else the last
+  // weigh-in (Stock-In or Stock-Out) before the day began, else the last
+  // recorded stock level on the flavour itself (e.g. entered under Manage ->
+  // Flavours). Returns { g, at, source } or null if nothing was ever recorded.
+  function openingFor(f, dayStartMs, inEvt){
+    if(inEvt && inEvt.readings && inEvt.readings[f.id] != null){
+      return { g: inEvt.readings[f.id], at: inEvt.createdAt, source: "Stock-In" };
+    }
+    var prev = state.events.find(function(e){ return e.type === "stock" && e.readings && e.readings[f.id] != null && e.createdAt < dayStartMs; });
+    if(prev) return { g: prev.readings[f.id], at: prev.createdAt, source: "last weigh-in, " + fmtDateTime(prev.createdAt) };
+    if(f.lastStockG != null){
+      var at = f.lastStockAt != null ? (toMillis(f.lastStockAt) || 0) : 0;
+      return { g: f.lastStockG, at: at, source: "last recorded stock" + (at ? ", " + fmtDateTime(at) : "") };
+    }
+    return null;
+  }
+
+  // Checks saved before openingFor existed may have no opening figure; fill
+  // it in for display from what is recorded now.
+  function rowForDisplay(r, check){
+    if(r.missingG != null || r.openG != null) return r;
+    var f = state.flavours.find(function(x){ return x.id === r.flavourId; });
+    if(!f || !check.day) return r;
+    var p = check.day.split("-");
+    var dayStart = new Date(+p[0], +p[1] - 1, +p[2]).getTime();
+    var dayEnd = new Date(+p[0], +p[1] - 1, +p[2] + 1).getTime();
+    var op = openingFor(f, dayStart, null);
+    if(!op) return r;
+    var delivered = 0;
+    state.events.forEach(function(e){ if(e.type === "restock" && e.flavourId === f.id && e.createdAt > op.at && e.createdAt <= dayEnd) delivered += e.amountG || 0; });
+    return Object.assign({}, r, { openG: op.g, openSource: op.source, deliveredG: delivered, expectedCloseG: Math.round(op.g + delivered - (r.soldG || 0)) });
+  }
+
   function buildStockCheck(outEvt, sales, daySales){
     var day = todayKey(new Date(outEvt.createdAt));
     // state.events is newest-first, so the first match is the latest Stock-In.
@@ -857,16 +891,8 @@
       var sold = Math.round(soldG[f.id]||0);
       var close = outEvt.readings ? outEvt.readings[f.id] : null;
       if(close === undefined) close = null;
-      // Opening: that day's Stock-In, or failing that the last weigh-in
-      // (Stock-In or Stock-Out) before the day began, so a day without a
-      // Stock-In still has stock figures.
-      var open = null, openAt = null, openSource = "";
-      if(inEvt && inEvt.readings && inEvt.readings[f.id] != null){
-        open = inEvt.readings[f.id]; openAt = inEvt.createdAt; openSource = "Stock-In";
-      } else {
-        var prev = state.events.find(function(e){ return e.type === "stock" && e.readings && e.readings[f.id] != null && e.createdAt < dayStartMs; });
-        if(prev){ open = prev.readings[f.id]; openAt = prev.createdAt; openSource = "last weigh-in, " + fmtDateTime(prev.createdAt); }
-      }
+      var op = openingFor(f, dayStartMs, inEvt);
+      var open = op ? op.g : null, openAt = op ? op.at : null, openSource = op ? op.source : "";
       var row = { flavourId: f.id, name: f.name, soldG: sold, salesCents: salesCents[f.id]||0,
         daySoldG: daySoldG ? Math.round(daySoldG[f.id]||0) : null,
         openG: open, openSource: openSource, closeG: close, expectedCloseG: null,
@@ -1977,12 +2003,13 @@
   // Staff see sold grams and which flavours to re-weigh; the boss also sees
   // missing, drying and taster estimates.
   function renderCheckRows(check, detailed){
-    return (check.rows||[]).map(function(r){
+    return (check.rows||[]).map(function(r0){
+      var r = rowForDisplay(r0, check);
       var pill = r.flag === "short" ? '<span class="pill low">Check</span>' : (r.flag === "over" ? '<span class="pill pending">Check</span>' : (r.missingG == null ? '' : '<span class="pill open">OK</span>'));
       var outside = r.daySoldG != null && r.daySoldG - r.soldG >= 10;
       var sub = "Sold in Square " + fmtG(r.soldG) + (outside ? " between Stock-In and Stock-Out (" + fmtG(r.daySoldG) + " all day)" : "");
       if(r.missingG == null){
-        if(r.openG == null) sub += " - no weigh-in yet to compare";
+        if(r.openG == null) sub += " - no stock level recorded yet for this flavour";
         else sub += "<br>Opened " + fmtG(r.openG) + (r.openSource ? " (" + escapeHtml(r.openSource) + ")" : "") + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") +
           " - sold " + fmtG(r.soldG) + " = <b>" + fmtG(r.expectedCloseG) + " should be left</b>" + (r.closeG == null ? " (not weighed at close)" : "");
       }
@@ -2035,38 +2062,50 @@
 
   /* ---- Current stock (estimate) ---- */
   // What should be on hand right now, whether or not today's Stock-In or
-  // Stock-Out was done: the last weigh-in, plus deliveries since, minus
-  // Square sales since (fetched in chunks of up to a day; the worker serves
-  // at most 36 hours per request).
+  // Stock-Out was done: each flavour's last recorded stock level (set by a
+  // Stock-In/Out, a delivery, or under Manage -> Flavours) minus Square sales
+  // since it was recorded. Sales are fetched in chunks of up to a day (the
+  // worker serves at most 36 hours per request), once per distinct "since".
   var stockNow = { loading: false, data: null, error: "" };
-  function latestStockEvent(){
-    return state.events.find(function(e){ return e.type === "stock" && e.readings; }) || null;
+  function stockBase(f){
+    return { g: f.lastStockG || 0, at: f.lastStockAt != null ? (toMillis(f.lastStockAt) || 0) : 0 };
   }
   function loadStockNow(){
     if(stockNow.loading) return;
-    var base = latestStockEvent();
     stockNow.loading = true; stockNow.error = ""; stockNow.data = null;
     var done = function(sold, note){
-      stockNow.data = { baseId: base ? base.id : null, sold: sold, note: note || "", at: Date.now() };
+      stockNow.data = { sold: sold, note: note || "", at: Date.now() };
       stockNow.loading = false;
       if(state.screen === "admin-stockcheck") render();
     };
-    if(!base || !getSquareConfig()) return done(null, getSquareConfig() ? "" : "Square is not set up");
-    var from = base.createdAt, to = Date.now();
-    if(to - from > 7 * 86400000) return done(null, "The last weigh-in is more than a week old - do a Stock-In for a proper count");
-    var chunks = [];
-    for(var t = from; t < to; t += 86400000){ chunks.push([t, Math.min(t + 86400000, to)]); }
-    Promise.all(chunks.map(function(c){
-      return squareGet("/sales?from=" + encodeURIComponent(new Date(c[0]).toISOString()) + "&to=" + encodeURIComponent(new Date(c[1]).toISOString()));
-    })).then(function(results){
-      var sold = {};
-      results.forEach(function(res){
+    if(!getSquareConfig()) return done(null, "Square is not set up");
+    var now = Date.now(); var weekAgo = now - 7 * 86400000;
+    var groups = {}; var tooOld = [];
+    state.flavours.forEach(function(f){
+      var b = stockBase(f);
+      if(!b.at || b.at < weekAgo){ tooOld.push(f.name); return; }
+      (groups[b.at] = groups[b.at] || []).push(f.id);
+    });
+    var jobs = [];
+    Object.keys(groups).forEach(function(k){
+      var from = +k;
+      for(var t = from; t < now; t += 86400000){
+        jobs.push({ ids: groups[k], from: t, to: Math.min(t + 86400000, now) });
+      }
+    });
+    Promise.all(jobs.map(function(j){
+      return squareGet("/sales?from=" + encodeURIComponent(new Date(j.from).toISOString()) + "&to=" + encodeURIComponent(new Date(j.to).toISOString())).then(function(res){
+        var out = {};
         (res.items || []).forEach(function(it){
           var f = matchFlavour(it);
-          if(f) sold[f.id] = (sold[f.id] || 0) + (it.grams || 0);
+          if(f && j.ids.indexOf(f.id) >= 0) out[f.id] = (out[f.id] || 0) + (it.grams || 0);
         });
+        return out;
       });
-      done(sold);
+    })).then(function(parts){
+      var sold = {};
+      parts.forEach(function(p){ Object.keys(p).forEach(function(id){ sold[id] = (sold[id] || 0) + p[id]; }); });
+      done(sold, tooOld.length ? "Last recorded more than a week ago (Square sales not taken off): " + tooOld.join(", ") + ". Do a Stock-In for a fresh count." : "");
     }).catch(function(err){
       console.error("Current stock failed:", err);
       stockNow.error = (err && err.message) || "Could not load Square sales";
@@ -2075,29 +2114,22 @@
   }
 
   function renderCurrentStock(){
-    var base = latestStockEvent();
     var data = stockNow.data;
     var rows = state.flavours.map(function(f){
-      var reading = base && base.readings[f.id] != null ? base.readings[f.id] : null;
-      var since = base ? base.createdAt : 0;
-      if(reading == null){ reading = f.lastStockG || 0; since = toMillis(f.lastStockAt) || 0; }
-      var delivered = 0;
-      state.events.forEach(function(e){ if(e.type === "restock" && e.flavourId === f.id && e.createdAt > since) delivered += e.amountG || 0; });
-      var sold = data && data.sold ? Math.round(data.sold[f.id] || 0) : null;
-      var est = Math.round(reading + delivered - (sold || 0));
+      var b = stockBase(f);
+      var sold = data && data.sold && data.sold[f.id] != null ? Math.round(data.sold[f.id]) : (data && data.sold ? 0 : null);
+      var est = Math.round(b.g - (sold || 0));
       var low = est <= (f.thresholdG || 0);
-      var how = base && base.readings[f.id] != null ? (base.dir === "in" ? "Stock-In" : "Stock-Out") + ", " + fmtDateTime(base.createdAt) : (since ? "last known, " + fmtDateTime(since) : "last known");
-      var sub = "Weighed " + fmtG(reading) + " (" + escapeHtml(how) + ")" +
-        (delivered ? " + " + fmtG(delivered) + " delivered" : "") +
+      var sub = "Last recorded " + fmtG(b.g) + (b.at ? " (" + fmtDateTime(b.at) + ")" : "") +
         (sold != null ? " - " + fmtG(sold) + " sold in Square since" : (stockNow.loading ? " - loading Square sales..." : ""));
       return '<div class="list-row">' +
         '<div class="main"><div class="t">'+escapeHtml(f.name)+'</div><div class="s">'+sub+'</div></div>' +
-        '<div class="tabular" style="text-align:right;"><div style="font-weight:700;">'+(sold != null ? "~" : "")+fmtG(est)+'</div>'+(low ? '<span class="pill low">Low</span>' : '')+'</div>' +
+        '<div class="tabular" style="text-align:right;"><div style="font-weight:700;">'+(sold ? "~" : "")+fmtG(est)+'</div>'+(low ? '<span class="pill low">Low</span>' : '')+'</div>' +
       '</div>';
     }).join("") || '<div class="empty" style="padding:10px 0;">No flavours set up yet.</div>';
     return '<div class="card">' +
       '<div class="eyebrow">Current stock (estimate)</div>' +
-      '<p class="muted" style="font-size:12px;margin-top:4px;">Last weigh-in + deliveries - Square sales since. Not counting tasters or drying, so the real figure is a little lower.</p>' +
+      '<p class="muted" style="font-size:12px;margin-top:4px;">Last recorded stock level (Stock-In/Out, delivery or Manage -> Flavours) minus Square sales since. Tasters and drying are not taken off, so the real figure is a little lower.</p>' +
       '<div style="padding-block:4px;">'+rows+'</div>' +
       (data && data.note ? '<p class="s" style="color:var(--warn);margin-top:6px;">'+escapeHtml(data.note)+'</p>' : '') +
       '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" id="btn-refresh-stocknow">Refresh</button>' +
