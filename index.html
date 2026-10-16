@@ -373,7 +373,7 @@
 
   // Bump on every change that ships. The app compares it with the live page
   // to offer a one-tap update (see checkForUpdate) and shows it under Manage.
-  var APP_VERSION = "2026-10-16.2";
+  var APP_VERSION = "2026-10-17.1";
 
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
@@ -720,6 +720,44 @@
       lines.push("- " + g.name + ": " + fmtWeight(g.grams) + ", " + fmtMoney(g.cents/100) + (g.matched ? "" : " (not matched to a flavour)"));
     });
     if(!data.groups.length) lines.push("- No biltong sold through Square yet this week.");
+    return lines.join("\n");
+  }
+
+  // Sends one plain-text email through EmailJS (same template and recipient
+  // as the end-of-day report). Never blocks or fails the save it follows.
+  function sendEmailText(subject, text){
+    var cfg = getEmailConfig();
+    if(!cfg || typeof emailjs === "undefined") return Promise.resolve();
+    var params = { subject: subject, title: subject, name: "Biltong Floor Log", message: text };
+    if(cfg.toEmail) params.to_email = cfg.toEmail;
+    return emailjs.send(cfg.serviceId, cfg.templateId, params, cfg.publicKey).catch(function(err){
+      console.error("Email failed:", err);
+      toast("Saved, but the email didn't send");
+    });
+  }
+
+  // Emailed as soon as a Stock-In is saved, whether or not the cash has been
+  // done. `before` holds each flavour's last recorded level before this
+  // Stock-In, to show the change (overnight drying, or a weighing slip).
+  function buildStockInEmailText(evt, before){
+    var lines = ["Stock-In by " + evt.employeeName + " at " + fmtTime(evt.createdAt) + " on " + todayKey(new Date(evt.createdAt)) + ":", ""];
+    var low = [];
+    state.flavours.forEach(function(f){
+      var g = evt.readings[f.id];
+      if(g == null) return;
+      var b = before[f.id];
+      var change = b && b.g != null ? Math.round(g - b.g) : null;
+      if(g <= (f.thresholdG || 0)) low.push(f.name);
+      lines.push("- " + f.name + ": " + fmtG(g) +
+        (change != null ? " (last recorded " + fmtG(b.g) + (b.at ? " on " + fmtDateTime(b.at) : "") + ", " + (change > 0 ? "+" : "") + change + " g)" : "") +
+        (g <= (f.thresholdG || 0) ? " LOW" : ""));
+    });
+    var total = 0; Object.keys(evt.readings).forEach(function(k){ total += evt.readings[k] || 0; });
+    lines.push("", "Total: " + fmtWeight(total));
+    if(low.length) lines.push("Low stock: " + low.join(", "));
+    var day = todayKey(new Date(evt.createdAt));
+    var done = function(type){ return state.events.some(function(e){ return e.type === type && e.dir === "in" && todayKey(new Date(eventTime(e))) === day; }); };
+    lines.push("", "Also today so far: Time-In " + (done("time") ? "done" : "NOT done") + ", Cash-In " + (done("cash") ? "done" : "NOT done") + ".");
     return lines.join("\n");
   }
 
@@ -2356,6 +2394,8 @@
         readings[id] = val;
       });
       if(!ok){ toast("Enter a weight for every flavour"); return; }
+      var before = {};
+      state.flavours.forEach(function(f){ before[f.id] = { g: f.lastStockG, at: f.lastStockAt != null ? toMillis(f.lastStockAt) : 0 }; });
       var updates = state.flavours.map(function(f){
         var w = readings[f.id];
         if(dir === "out" && w <= f.thresholdG) flagged.push(f.name);
@@ -2370,6 +2410,9 @@
         else{ toast("Stock-"+dir+" saved"); }
         return refreshAll();
       }).then(function(){
+        if(dir === "in" && savedEvt){
+          sendEmailText("Biltong Floor Log - Stock-In - " + todayKey() + " (" + state.employee.name + ")", buildStockInEmailText(savedEvt, before));
+        }
         if(dir !== "out" || !getSquareConfig()) return go("home");
         toast("Checking against Square sales...");
         return runStockCheck(savedEvt).then(function(check){ go(check ? "stockcheck" : "home"); });
