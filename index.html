@@ -373,7 +373,7 @@
 
   // Bump on every change that ships. The app compares it with the live page
   // to offer a one-tap update (see checkForUpdate) and shows it under Manage.
-  var APP_VERSION = "2026-10-17.1";
+  var APP_VERSION = "2026-10-17.2";
 
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
@@ -982,12 +982,23 @@
     var d0 = new Date(outEvt.createdAt);
     var dayStart = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate()).getTime();
     var dayEnd = Math.min(new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + 1).getTime(), Date.now());
-    var path = "/sales?from=" + encodeURIComponent(new Date(dayStart).toISOString()) + "&to=" + encodeURIComponent(new Date(dayEnd).toISOString());
-    return squareGet(path).then(function(sales){
-      var check = buildStockCheck(outEvt, sales);
+    var q = function(a, b){ return "/sales?from=" + encodeURIComponent(new Date(a).toISOString()) + "&to=" + encodeURIComponent(new Date(b).toISOString()); };
+    // When the day has both a Stock-In and a (real) Stock-Out, the stock sums
+    // compare the two weigh-ins with Square sales made between them - the
+    // scale and the till then cover exactly the same hours. The whole day's
+    // sales are still fetched and shown alongside.
+    var day = todayKey(d0);
+    var inEvt = outEvt.id ? state.events.find(function(e){
+      return e.type === "stock" && e.dir === "in" && e.createdAt <= outEvt.createdAt && todayKey(new Date(e.createdAt)) === day;
+    }) : null;
+    var fetches = [squareGet(q(dayStart, dayEnd))];
+    if(inEvt) fetches.push(squareGet(q(inEvt.createdAt, outEvt.createdAt)));
+    return Promise.all(fetches).then(function(res){
+      var check = inEvt ? buildStockCheck(outEvt, res[1], res[0]) : buildStockCheck(outEvt, res[0]);
       check.wholeDay = true;
       check.fromMs = dayStart;
       check.toMs = dayEnd;
+      if(inEvt){ check.inMs = inEvt.createdAt; check.outMs = outEvt.createdAt; check.windowOrders = res[1].orders || 0; check.orders = res[0].orders || 0; }
       check.employeeId = state.employee.id;
       check.employeeName = state.employee.name;
       return DB.logEvent(check);
@@ -1039,6 +1050,8 @@
       if(!check) return !!out;
       // (5 minutes' slack for the device clock vs the server's timestamps)
       if(out && check.toMs < out.createdAt - 5 * 60000) return true;
+      var hasIn = state.events.some(function(e){ return e.type === "stock" && e.dir === "in" && todayKey(new Date(e.createdAt)) === day && (!out || e.createdAt <= out.createdAt); });
+      if(out && hasIn && !check.inMs) return true;
       if(day === today) return false;
       var p = day.split("-");
       var endOfDay = new Date(+p[0], +p[1] - 1, +p[2] + 1).getTime();
@@ -2045,11 +2058,17 @@
       var r = rowForDisplay(r0, check);
       var pill = r.flag === "short" ? '<span class="pill low">Check</span>' : (r.flag === "over" ? '<span class="pill pending">Check</span>' : (r.missingG == null ? '' : '<span class="pill open">OK</span>'));
       var outside = r.daySoldG != null && r.daySoldG - r.soldG >= 10;
-      var sub = "Sold in Square " + fmtG(r.soldG) + (outside ? " between Stock-In and Stock-Out (" + fmtG(r.daySoldG) + " all day)" : "");
+      var sub = "Sold in Square " + fmtG(r.soldG) + (check.inMs ? " between Stock-In and Stock-Out" + (r.daySoldG != null ? " (" + fmtG(r.daySoldG) + " all day)" : "") : (outside ? " between Stock-In and Stock-Out (" + fmtG(r.daySoldG) + " all day)" : ""));
       if(r.missingG == null){
         if(r.openG == null) sub += " - no stock level recorded yet for this flavour";
         else sub += "<br>Opened " + fmtG(r.openG) + (r.openSource ? " (" + escapeHtml(r.openSource) + ")" : "") + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") +
           " - sold " + fmtG(r.soldG) + " = <b>" + fmtG(r.expectedCloseG) + " should be left</b>" + (r.closeG == null ? " (not weighed at close)" : "");
+      }
+      else if(detailed && check.inMs){
+        var gone = Math.round(r.openG + (r.deliveredG || 0) - r.closeG);
+        sub += "<br>Stock-In " + fmtG(r.openG) + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") + " - Stock-Out " + fmtG(r.closeG) + " = <b>" + fmtG(gone) + " gone</b>" +
+          "<br>Square sold " + fmtG(r.soldG) + " in that time - <b>unaccounted " + fmtG(r.missingG) + "</b>: drying " + (r.dryingG == null ? "not known yet" : "~" + fmtG(r.dryingG)) +
+          ", tasters/other ~" + fmtG(r.tastersG) + (r.tasterCents != null ? " (" + fmtMoney(r.tasterCents/100) + ")" : "");
       }
       else if(detailed){
         sub += " - opened " + fmtG(r.openG) + (r.openSource && r.openSource !== "Stock-In" ? " (" + escapeHtml(r.openSource) + ")" : "") + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") + ", closed " + fmtG(r.closeG) +
@@ -2065,7 +2084,9 @@
   }
   function renderCheckExtras(check){
     var out = "";
-    if(check.wholeDay){
+    if(check.inMs){
+      out += '<p class="s muted" style="margin-top:10px;">Compared Stock-In at '+fmtTime(check.inMs)+' with Stock-Out at '+fmtTime(check.outMs)+': '+(check.windowOrders != null ? check.windowOrders : '?')+' Square orders in that time, '+check.orders+' all day.</p>';
+    } else if(check.wholeDay){
       var partial = check.toMs < new Date(new Date(check.toMs).getFullYear(), new Date(check.toMs).getMonth(), new Date(check.toMs).getDate() + 1).getTime() - 60000;
       out += '<p class="s muted" style="margin-top:10px;">Square sales for the whole day'+(partial ? ' up to '+fmtTime(check.toMs)+' (the rest is added once the day is over)' : '')+': '+check.orders+' orders.</p>';
     } else if(check.fromMs){
@@ -2096,6 +2117,48 @@
     '<div class="card" style="padding-block:4px;">' + renderCheckRows(check, state.employee.isAdmin) + '</div>' +
     renderCheckExtras(check) +
     '<button class="btn btn-primary" style="width:100%;margin-top:12px;" data-go="home">Done</button>';
+  }
+
+  /* ---- Square sales list (per day, on demand) ---- */
+  // Every weighed Square sale for a day with its time, to track down why
+  // stock doesn't match (a mis-keyed weight, a sale rung up as the wrong
+  // flavour, sales before Stock-In or after Stock-Out). Needs the worker's
+  // &detail=1 support; fetched only when the boss asks.
+  var salesLists = {};
+  function loadSalesList(day){
+    var p = day.split("-");
+    var from = new Date(+p[0], +p[1] - 1, +p[2]).getTime();
+    var to = Math.min(new Date(+p[0], +p[1] - 1, +p[2] + 1).getTime(), Date.now());
+    salesLists[day] = { loading: true };
+    render();
+    squareGet("/sales?detail=1&from=" + encodeURIComponent(new Date(from).toISOString()) + "&to=" + encodeURIComponent(new Date(to).toISOString())).then(function(res){
+      salesLists[day] = res.lines ? { lines: res.lines } : { error: "The Square worker needs updating to show the sales list (paste the latest worker code into Cloudflare)." };
+    }).catch(function(err){
+      salesLists[day] = { error: (err && err.message) || "Could not load" };
+    }).then(function(){ if(state.screen === "admin-stockcheck") render(); });
+  }
+  function renderSalesList(day, check){
+    var sl = salesLists[day];
+    if(!sl) return '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" data-sales-day="'+day+'">Show every Square sale this day</button>';
+    if(sl.loading) return '<p class="s muted" style="margin-top:10px;">Loading Square sales...</p>';
+    if(sl.error) return '<p class="s" style="margin-top:10px;color:var(--warn);">'+escapeHtml(sl.error)+'</p>';
+    var groups = {}; var order = [];
+    sl.lines.forEach(function(l){
+      var f = matchFlavour(l);
+      var key = f ? f.name : (l.name || "Unnamed") + (l.variation ? " - " + l.variation : "") + " (not a flavour)";
+      if(!groups[key]){ groups[key] = []; order.push(key); }
+      groups[key].push(l);
+    });
+    var html = order.sort().map(function(key){
+      var total = 0;
+      var items = groups[key].map(function(l){
+        var t = Date.parse(l.at) || 0; total += l.grams || 0;
+        var when = check && check.inMs ? (t && t < check.inMs ? " (before Stock-In)" : (t && t > check.outMs ? " (after Stock-Out)" : "")) : "";
+        return '<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;border-bottom:1px solid var(--border);"><span>'+(t ? fmtTime(t) : "-")+'<span style="color:var(--warn);">'+when+'</span></span><span class="tabular">'+fmtG(l.grams)+' - '+fmtMoney((l.cents||0)/100)+'</span></div>';
+      }).join("");
+      return '<div style="margin-top:10px;"><div class="s" style="font-weight:700;">'+escapeHtml(key)+' - '+groups[key].length+' sales, '+fmtG(total)+'</div>'+items+'</div>';
+    }).join("") || '<p class="s muted">No weighed sales in Square this day.</p>';
+    return '<div style="margin-top:12px;"><div class="eyebrow">Every Square sale</div>'+html+'</div>';
   }
 
   /* ---- Current stock (estimate) ---- */
@@ -2205,6 +2268,7 @@
       return '<div class="card" style="margin-top:12px;">' +
         '<div class="eyebrow">'+d+' - '+c.orders+' Square orders</div>' +
         '<div style="padding-block:4px;">'+renderCheckRows(c, true)+'</div>' + renderCheckExtras(c) +
+        renderSalesList(d, c) +
       '</div>';
     }).join("") || '<div class="card empty">No stock checks yet. One runs automatically at every Stock-Out once Square is set up.</div>';
     return backRow("Manage") +
@@ -2533,6 +2597,9 @@
     if(state.screen === "admin-stockcheck" && !stockNow.loading && !stockNow.data){
       setTimeout(function(){ if(!stockNow.loading && !stockNow.data) loadStockNow(); }, 0);
     }
+    document.querySelectorAll("[data-sales-day]").forEach(function(btn){
+      btn.addEventListener("click", function(){ loadSalesList(btn.getAttribute("data-sales-day")); });
+    });
     var refreshNow = document.getElementById("btn-refresh-stocknow");
     if(refreshNow) refreshNow.addEventListener("click", function(){ stockNow.loading = false; loadStockNow(); render(); });
     var rerun = document.getElementById("btn-run-stockcheck");

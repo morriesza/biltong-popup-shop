@@ -24,6 +24,7 @@
 //        wrong guesses are rate limited (per device and overall).
 //   GET  /status                      (signed in) -> { ok, locations }
 //   GET  /sales?from=<ISO>&to=<ISO>   (signed in) -> { ok, orders, cashCents, items, unweighed }
+//        add &detail=1 for `lines`: each weighed sale { at, name, variation, grams, cents }
 //        Grams sold (and sales cents) per Square item for a time window -
 //        no customer, card or payment details.
 //   POST /opening-check   (boss) -> { ok, missing, sent }
@@ -103,7 +104,7 @@ export default {
         if (isNaN(from) || isNaN(to) || to <= from || to - from > MAX_WINDOW_MS) {
           throw new HttpError(400, "from/to must be ISO times, at most 36 hours apart");
         }
-        return reply(200, Object.assign({ ok: true }, await salesSummary(env, from, to)));
+        return reply(200, Object.assign({ ok: true }, await salesSummary(env, from, to, url.searchParams.get("detail") === "1")));
       }
       throw new HttpError(404, "Not found");
     } catch (err) {
@@ -404,7 +405,7 @@ function toGrams(quantity, quantityUnit) {
   return parseFloat(quantity || "0") * factor;
 }
 
-async function salesSummary(env, from, to) {
+async function salesSummary(env, from, to, detail) {
   const locations = await listLocations(env);
   const locationIds = locations.map((l) => l.id).slice(0, 10);
   const items = {};
@@ -412,7 +413,8 @@ async function salesSummary(env, from, to) {
   let orders = 0;
   let cashCents = 0;
 
-  const add = (li, sign, money) => {
+  const lines = [];
+  const add = (li, sign, money, at) => {
     const name = li.name || "Unnamed item";
     const variation = li.variation_name || "";
     const key = name + "|" + variation;
@@ -421,6 +423,9 @@ async function salesSummary(env, from, to) {
       unweighed[key] = unweighed[key] || { name, variation, qty: 0 };
       unweighed[key].qty += sign * parseFloat(li.quantity || "0");
       return;
+    }
+    if (detail && lines.length < 1000) {
+      lines.push({ at, name, variation, grams: Math.round(sign * grams * 10) / 10, cents: sign * ((money && money.amount) || 0) });
     }
     items[key] = items[key] || { name, variation, grams: 0, cents: 0 };
     items[key].grams += sign * grams;
@@ -443,9 +448,10 @@ async function salesSummary(env, from, to) {
     });
     (page.orders || []).forEach((o) => {
       orders++;
-      (o.line_items || []).forEach((li) => add(li, 1, li.gross_sales_money));
+      const at = o.closed_at || o.created_at || "";
+      (o.line_items || []).forEach((li) => add(li, 1, li.gross_sales_money, at));
       (o.returns || []).forEach((r) => {
-        (r.return_line_items || []).forEach((li) => add(li, -1, li.gross_return_money));
+        (r.return_line_items || []).forEach((li) => add(li, -1, li.gross_return_money, at));
       });
       // Cash taken into the till (amount applied to the order, so change
       // given back is already excluded), less cash refunds.
@@ -460,10 +466,12 @@ async function salesSummary(env, from, to) {
   } while (cursor);
 
   const round = (o) => Object.assign({}, o, o.grams != null ? { grams: Math.round(o.grams * 10) / 10 } : {});
-  return {
+  const out = {
     orders,
     cashCents,
     items: Object.values(items).map(round),
     unweighed: Object.values(unweighed)
   };
+  if (detail) out.lines = lines;
+  return out;
 }
