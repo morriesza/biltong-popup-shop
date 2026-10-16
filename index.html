@@ -373,7 +373,7 @@
 
   // Bump on every change that ships. The app compares it with the live page
   // to offer a one-tap update (see checkForUpdate) and shows it under Manage.
-  var APP_VERSION = "2026-10-17.2";
+  var APP_VERSION = "2026-10-17.3";
 
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
@@ -623,6 +623,22 @@
         });
         return out;
       });
+    },
+    // All events from fromMs (inclusive) to toMs (exclusive), oldest first -
+    // straight from the database, so any date works, not just recent ones.
+    getEventsBetween: function(fromMs, toMs){
+      if(this.mode === "demo"){
+        return Promise.resolve(this._demo.events.filter(function(e){ return e.createdAt >= fromMs && e.createdAt < toMs; })
+          .sort(function(a, b){ return a.createdAt - b.createdAt; }));
+      }
+      return this._fs.collection("events").where("createdAt", ">=", new Date(fromMs)).where("createdAt", "<", new Date(toMs))
+        .orderBy("createdAt", "asc").get().then(function(snap){
+          var out = []; snap.forEach(function(doc){
+            var d = doc.data();
+            out.push(Object.assign({id:doc.id}, d, { createdAt: toMillis(d.createdAt) }));
+          });
+          return out;
+        });
     }
   };
 
@@ -1227,6 +1243,7 @@
   function go(screen, data){
     // Weekly sales is a live look at Square: start fresh at this week each visit.
     if(screen === "admin-stockcheck" && state.screen !== "admin-stockcheck"){ stockNow.data = null; stockNow.error = ""; }
+    if(screen === "admin-stockhistory" && state.screen !== "admin-stockhistory"){ stockHist = { day: todayKey(), loading: false, events: null, error: "" }; }
     if(screen === "admin-cashlog" && state.screen !== "admin-cashlog"){ cashlog.data = null; cashlog.error = ""; }
     if(screen === "admin-weekly" && state.screen !== "admin-weekly"){ weekly.offset = 0; weekly.data = null; weekly.error = ""; weekly.key = null; }
     state.screen = screen;
@@ -1299,6 +1316,7 @@
       case "admin-hours": html += renderAdminHours(); break;
       case "admin-weekly": html += renderAdminWeekly(); break;
       case "admin-cashlog": html += renderAdminCashLog(); break;
+      case "admin-stockhistory": html += renderAdminStockHistory(); break;
       case "cashpickup": html += renderCashPickup(); break;
       case "stockcheck": html += renderStockCheckResult(); break;
       case "restock": html += renderRestock(); break;
@@ -1501,6 +1519,7 @@
       '<button class="tile time" data-go="admin-employees"><div class="glyph">'+svgIcon("admin")+'</div><div><div class="lbl">Staff</div><div class="sub">'+state.employees.length+' PINs</div></div></button>' +
       '<button class="tile time" data-go="admin-hours"><div class="glyph">'+svgIcon("clockOut")+'</div><div><div class="lbl">Staff Hours</div><div class="sub">Shifts & missed clock-ons</div></div></button>' +
       '<button class="tile time" data-go="admin-log"><div class="glyph">'+svgIcon("clockIn")+'</div><div><div class="lbl">Activity log</div><div class="sub">All check-ins</div></div></button>' +
+      '<button class="tile time" data-go="admin-stockhistory"><div class="glyph">'+svgIcon("scaleIn")+'</div><div><div class="lbl">Stock History</div><div class="sub">Every weigh-in, any date</div></div></button>' +
       '<button class="tile time" data-go="admin-stocklog"><div class="glyph">'+svgIcon("scaleOut")+'</div><div><div class="lbl">Stock Log</div><div class="sub">Trends & deliveries</div></div></button>' +
       '<button class="tile time" data-go="admin-stockcheck"><div class="glyph">'+svgIcon("scaleIn")+'</div><div><div class="lbl">Stock Check</div><div class="sub">'+(getSquareConfig()?"Weigh-ins vs Square sales":"Square not set up")+'</div></div></button>' +
       '<button class="tile time" data-go="admin-cashlog"><div class="glyph">'+svgIcon("cashIn")+'</div><div><div class="lbl">Cash Log</div><div class="sub">Float, pickups, till check</div></div></button>' +
@@ -2119,6 +2138,108 @@
     '<button class="btn btn-primary" style="width:100%;margin-top:12px;" data-go="home">Done</button>';
   }
 
+  /* ---- Stock history (any date) ---- */
+  // Every Stock-In, Stock-Out and delivery on a chosen day, exactly as
+  // entered (who, when, each flavour's grams), plus a per-flavour summary.
+  // Loaded from the database for that date, so older days work too.
+  var stockHist = { day: null, loading: false, events: null, error: "" };
+  function loadStockHistory(day){
+    var p = day.split("-");
+    var from = new Date(+p[0], +p[1] - 1, +p[2]).getTime();
+    var to = new Date(+p[0], +p[1] - 1, +p[2] + 1).getTime();
+    stockHist = { day: day, loading: true, events: null, error: "" };
+    DB.getEventsBetween(from, to).then(function(evs){
+      if(stockHist.day !== day) return;
+      stockHist.events = evs.filter(function(e){ return e.type === "stock" || e.type === "restock"; });
+    }).catch(function(err){
+      if(stockHist.day !== day) return;
+      console.error("Stock history failed:", err);
+      stockHist.error = (err && err.message) || "Could not load";
+    }).then(function(){
+      if(stockHist.day !== day) return;
+      stockHist.loading = false;
+      if(state.screen === "admin-stockhistory") render();
+    });
+  }
+  function shiftDay(day, n){
+    var p = day.split("-");
+    return todayKey(new Date(+p[0], +p[1] - 1, +p[2] + n));
+  }
+
+  function renderAdminStockHistory(){
+    var day = stockHist.day || todayKey();
+    var today = todayKey();
+    var head = backRow("Manage") + '<h1 style="font-size:20px;">Stock history</h1>' +
+      '<div class="card">' +
+        '<div class="field"><label>Day</label><input id="sh-day" type="date" value="'+day+'" max="'+today+'"></div>' +
+        '<div class="btnrow" style="margin-top:10px;gap:8px;">' +
+          '<button class="btn btn-ghost" style="flex:1;" id="btn-sh-prev">&lt; Previous day</button>' +
+          (day < today ? '<button class="btn btn-ghost" style="flex:1;" id="btn-sh-next">Next day &gt;</button>' : '') +
+        '</div>' +
+      '</div>';
+    if(stockHist.loading || !stockHist.events){
+      return head + (stockHist.error ? '<div class="card" style="color:var(--bad);">Could not load: '+escapeHtml(stockHist.error)+'</div>' : '<div class="card empty">Loading...</div>');
+    }
+    var evs = stockHist.events;
+    if(!evs.length) return head + '<div class="card empty">No Stock-In, Stock-Out or deliveries recorded on '+day+'.</div>';
+
+    var flavourName = function(id){
+      var f = state.flavours.find(function(x){ return x.id === id; });
+      return f ? f.name : "(removed flavour)";
+    };
+    // Flavours in the usual order, plus any removed ones that appear that day.
+    var ids = state.flavours.map(function(f){ return f.id; });
+    evs.forEach(function(e){
+      if(e.readings) Object.keys(e.readings).forEach(function(id){ if(ids.indexOf(id) < 0) ids.push(id); });
+      if(e.flavourId && ids.indexOf(e.flavourId) < 0) ids.push(e.flavourId);
+    });
+
+    // Summary: latest Stock-In and Stock-Out of the day (corrections replace
+    // earlier ones), deliveries added up.
+    var lastIn = null, lastOut = null, delivered = {};
+    evs.forEach(function(e){
+      if(e.type === "stock" && e.dir === "in") lastIn = e;
+      if(e.type === "stock" && e.dir === "out") lastOut = e;
+      if(e.type === "restock") delivered[e.flavourId] = (delivered[e.flavourId] || 0) + (e.amountG || 0);
+    });
+    var cell = 'style="padding:6px 4px;text-align:right;border-bottom:1px solid var(--border);"';
+    var cellL = 'style="padding:6px 4px;text-align:left;border-bottom:1px solid var(--border);"';
+    var sumRows = ids.map(function(id){
+      var i = lastIn && lastIn.readings ? lastIn.readings[id] : null;
+      var o = lastOut && lastOut.readings ? lastOut.readings[id] : null;
+      var d = delivered[id] || 0;
+      var used = (i != null && o != null) ? Math.round(i + d - o) : null;
+      if(i == null && o == null && !d) return "";
+      return '<tr><td '+cellL+'>'+escapeHtml(flavourName(id))+'</td><td '+cell+'>'+fmtG(i)+'</td><td '+cell+'>'+(d ? "+" + fmtG(d) : "-")+'</td><td '+cell+'>'+fmtG(o)+'</td><td '+cell+'><b>'+fmtG(used)+'</b></td></tr>';
+    }).join("");
+    var summary = '<div class="card"><div class="eyebrow">Summary for '+day+'</div>' +
+      '<table class="tabular" style="width:100%;border-collapse:collapse;font-size:13px;margin-top:6px;">' +
+        '<tr><th '+cellL+'>Flavour</th><th '+cell+'>In</th><th '+cell+'>Delivered</th><th '+cell+'>Out</th><th '+cell+'>Used</th></tr>' + sumRows +
+      '</table>' +
+      '<p class="s muted" style="margin-top:8px;">Used = In + Delivered - Out (sold, tasters and drying together). If a weigh-in was done more than once, the latest one is used here; all of them are listed below.</p>' +
+    '</div>';
+
+    var cards = evs.map(function(e){
+      if(e.type === "restock"){
+        return '<div class="list-row"><div class="main"><div class="t">Delivery - '+fmtTime(e.createdAt)+'</div><div class="s">'+escapeHtml(e.employeeName || "")+(e.note ? ' - '+escapeHtml(e.note) : '')+'</div></div><div class="tabular">+'+fmtG(e.amountG)+' '+escapeHtml(flavourName(e.flavourId))+'</div></div>';
+      }
+      var rows = ids.filter(function(id){ return e.readings && e.readings[id] != null; }).map(function(id){
+        var low = (e.flagged || []).indexOf(flavourName(id)) >= 0;
+        return '<tr><td '+cellL+'>'+escapeHtml(flavourName(id))+(low ? ' <span class="pill low">Low</span>' : '')+'</td><td '+cell+'>'+fmtG(e.readings[id])+'</td></tr>';
+      }).join("");
+      var total = 0; Object.keys(e.readings || {}).forEach(function(k){ total += e.readings[k] || 0; });
+      return '<div class="card" style="margin-top:12px;">' +
+        '<div class="eyebrow">'+(e.dir === "in" ? "Stock-In" : "Stock-Out")+' - '+fmtTime(e.createdAt)+' - '+escapeHtml(e.employeeName || "")+'</div>' +
+        '<table class="tabular" style="width:100%;border-collapse:collapse;font-size:13px;margin-top:6px;">'+rows+
+          '<tr><td '+cellL+'><b>Total</b></td><td '+cell+'><b>'+fmtWeight(total)+'</b></td></tr></table>' +
+      '</div>';
+    });
+    var deliveries = cards.filter(function(c){ return c.indexOf('<div class="list-row">') === 0; });
+    var weighs = cards.filter(function(c){ return c.indexOf('<div class="list-row">') !== 0; });
+    return head + summary + weighs.join("") +
+      (deliveries.length ? '<div class="card" style="margin-top:12px;"><div class="eyebrow">Deliveries</div><div style="padding-block:4px;">'+deliveries.join("")+'</div></div>' : '');
+  }
+
   /* ---- Square sales list (per day, on demand) ---- */
   // Every weighed Square sale for a day with its time, to track down why
   // stock doesn't match (a mis-keyed weight, a sale rung up as the wrong
@@ -2544,6 +2665,19 @@
         return refreshEvents();
       }).then(function(){ go("home"); }).catch(function(err){ subP.disabled = false; reportSaveError(err); });
     });
+
+    // Admin: stock history
+    if(state.screen === "admin-stockhistory" && !stockHist.loading && !stockHist.events && !stockHist.error){
+      loadStockHistory(stockHist.day || todayKey()); render(); return;
+    }
+    var shDay = document.getElementById("sh-day");
+    if(shDay) shDay.addEventListener("change", function(){
+      if(/^\d{4}-\d{2}-\d{2}$/.test(shDay.value) && shDay.value <= todayKey()){ loadStockHistory(shDay.value); render(); }
+    });
+    var shPrev = document.getElementById("btn-sh-prev");
+    if(shPrev) shPrev.addEventListener("click", function(){ loadStockHistory(shiftDay(stockHist.day || todayKey(), -1)); render(); });
+    var shNext = document.getElementById("btn-sh-next");
+    if(shNext) shNext.addEventListener("click", function(){ loadStockHistory(shiftDay(stockHist.day || todayKey(), 1)); render(); });
 
     // Admin: cash log
     if(state.screen === "admin-cashlog" && !cashlog.loading && !cashlog.data && !cashlog.error){
