@@ -85,6 +85,11 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
   Older window-based checks may carry `daySoldG`/`dayOrders`; the display still handles them.
 - Square items match flavours by name (item, variation or both; case/punctuation ignored) or the flavour's `squareName` override.
 - Screens: `stockcheck` (shown after Stock-Out; staff see sold + re-weigh prompts) and Manage -> Stock Check (boss detail, 7-day totals).
+- Manage -> Stock Check starts with a "Current stock (estimate)" card (renderCurrentStock/loadStockNow): latest stock weigh-in
+  (Stock-In or Stock-Out) + deliveries since - Square sales since (fetched in <=24 h chunks, max 7 days back). Works with no
+  Stock-In/Stock-Out today. Not saved.
+- A check row's opening falls back to the last weigh-in before that day (`openSource` says which) when there was no Stock-In;
+  `expectedCloseG` = open + deliveries - sold is shown when there's no closing weigh-in ("should be left").
 - Gaps: opening Manage -> Stock Check fills in, one by one, any day in the last 14 with a Stock-Out but no check after it,
   or a finished day whose check isn't a complete whole day
   (stockCheckGaps/fillStockCheckGaps, each day tried once per app session). The boss can also check any chosen day (checkDay):

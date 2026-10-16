@@ -373,7 +373,7 @@
 
   // Bump on every change that ships. The app compares it with the live page
   // to offer a one-tap update (see checkForUpdate) and shows it under Manage.
-  var APP_VERSION = "2026-10-12.3";
+  var APP_VERSION = "2026-10-16.1";
 
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
@@ -686,7 +686,10 @@
       lines.push("");
       lines.push("STOCK CHECK VS SQUARE (" + check.orders + " Square orders, " + (check.wholeDay ? "whole day up to " + fmtTime(check.toMs) : "from " + fmtTime(check.fromMs) + " Stock-In to " + fmtTime(check.toMs) + " Stock-Out") + "):");
       (check.rows||[]).forEach(function(r){
-        if(r.missingG == null){ lines.push("- " + r.name + ": sold " + fmtG(r.soldG) + " (no Stock-In and Stock-Out that day to compare)"); return; }
+        if(r.missingG == null){
+          lines.push("- " + r.name + ": sold " + fmtG(r.soldG) + (r.expectedCloseG != null ? ", opened " + fmtG(r.openG) + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") + ", so about " + fmtG(r.expectedCloseG) + " should be left (not weighed at close)" : " (no weigh-in to compare)"));
+          return;
+        }
         lines.push("- " + r.name + ": sold " + fmtG(r.soldG) + (r.daySoldG != null && r.daySoldG - r.soldG >= 10 ? " between Stock-In and Stock-Out (" + fmtG(r.daySoldG) + " all day)" : "") + ", missing " + fmtG(r.missingG) +
           " (drying " + (r.dryingG == null ? "not known yet" : "~" + fmtG(r.dryingG)) + ", tasters ~" + fmtG(r.tastersG) +
           (r.tasterCents != null ? " = " + fmtMoney(r.tasterCents/100) : "") + ")" +
@@ -847,19 +850,35 @@
       });
     }
 
-    var hours = inEvt ? (outEvt.createdAt - inEvt.createdAt) / 3600000 : 0;
+    var d0 = new Date(outEvt.createdAt);
+    var dayStartMs = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate()).getTime();
+    var dayEndMs = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + 1).getTime();
     var rows = state.flavours.map(function(f){
       var sold = Math.round(soldG[f.id]||0);
       var close = outEvt.readings ? outEvt.readings[f.id] : null;
-      var open = inEvt && inEvt.readings ? inEvt.readings[f.id] : null;
+      if(close === undefined) close = null;
+      // Opening: that day's Stock-In, or failing that the last weigh-in
+      // (Stock-In or Stock-Out) before the day began, so a day without a
+      // Stock-In still has stock figures.
+      var open = null, openAt = null, openSource = "";
+      if(inEvt && inEvt.readings && inEvt.readings[f.id] != null){
+        open = inEvt.readings[f.id]; openAt = inEvt.createdAt; openSource = "Stock-In";
+      } else {
+        var prev = state.events.find(function(e){ return e.type === "stock" && e.readings && e.readings[f.id] != null && e.createdAt < dayStartMs; });
+        if(prev){ open = prev.readings[f.id]; openAt = prev.createdAt; openSource = "last weigh-in, " + fmtDateTime(prev.createdAt); }
+      }
       var row = { flavourId: f.id, name: f.name, soldG: sold, salesCents: salesCents[f.id]||0,
         daySoldG: daySoldG ? Math.round(daySoldG[f.id]||0) : null,
-        openG: open == null ? null : open, closeG: close == null ? null : close,
+        openG: open, openSource: openSource, closeG: close, expectedCloseG: null,
         deliveredG: 0, missingG: null, dryingG: null, tastersG: null, tasterCents: null, flag: "" };
-      if(open == null || close == null) return row;
+      if(open == null) return row;
+      var until = close != null ? outEvt.createdAt : dayEndMs;
       state.events.forEach(function(e){
-        if(e.type === "restock" && e.flavourId === f.id && e.createdAt > inEvt.createdAt && e.createdAt <= outEvt.createdAt){ row.deliveredG += (e.amountG||0); }
+        if(e.type === "restock" && e.flavourId === f.id && e.createdAt > openAt && e.createdAt <= until){ row.deliveredG += (e.amountG||0); }
       });
+      row.expectedCloseG = Math.round(open + row.deliveredG - sold);
+      if(close == null) return row;
+      var hours = (outEvt.createdAt - openAt) / 3600000;
       var missing = open + row.deliveredG - sold - close;
       var dr = getDryingRate(f.id);
       var drying = Math.max(0, (open + row.deliveredG + close) / 2 * dr.rate * hours);
@@ -1130,6 +1149,7 @@
 
   function go(screen, data){
     // Weekly sales is a live look at Square: start fresh at this week each visit.
+    if(screen === "admin-stockcheck" && state.screen !== "admin-stockcheck"){ stockNow.data = null; stockNow.error = ""; }
     if(screen === "admin-cashlog" && state.screen !== "admin-cashlog"){ cashlog.data = null; cashlog.error = ""; }
     if(screen === "admin-weekly" && state.screen !== "admin-weekly"){ weekly.offset = 0; weekly.data = null; weekly.error = ""; weekly.key = null; }
     state.screen = screen;
@@ -1961,9 +1981,13 @@
       var pill = r.flag === "short" ? '<span class="pill low">Check</span>' : (r.flag === "over" ? '<span class="pill pending">Check</span>' : (r.missingG == null ? '' : '<span class="pill open">OK</span>'));
       var outside = r.daySoldG != null && r.daySoldG - r.soldG >= 10;
       var sub = "Sold in Square " + fmtG(r.soldG) + (outside ? " between Stock-In and Stock-Out (" + fmtG(r.daySoldG) + " all day)" : "");
-      if(r.missingG == null){ sub += " - no Stock-In and Stock-Out that day to compare"; }
+      if(r.missingG == null){
+        if(r.openG == null) sub += " - no weigh-in yet to compare";
+        else sub += "<br>Opened " + fmtG(r.openG) + (r.openSource ? " (" + escapeHtml(r.openSource) + ")" : "") + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") +
+          " - sold " + fmtG(r.soldG) + " = <b>" + fmtG(r.expectedCloseG) + " should be left</b>" + (r.closeG == null ? " (not weighed at close)" : "");
+      }
       else if(detailed){
-        sub += " - opened " + fmtG(r.openG) + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") + ", closed " + fmtG(r.closeG) +
+        sub += " - opened " + fmtG(r.openG) + (r.openSource && r.openSource !== "Stock-In" ? " (" + escapeHtml(r.openSource) + ")" : "") + (r.deliveredG ? " + " + fmtG(r.deliveredG) + " delivered" : "") + ", closed " + fmtG(r.closeG) +
           "<br>Missing " + fmtG(r.missingG) + ": drying " + (r.dryingG == null ? "not known yet" : "~" + fmtG(r.dryingG)) +
           ", tasters ~" + fmtG(r.tastersG) + (r.tasterCents != null ? " (" + fmtMoney(r.tasterCents/100) + ")" : "");
       }
@@ -2009,6 +2033,77 @@
     '<button class="btn btn-primary" style="width:100%;margin-top:12px;" data-go="home">Done</button>';
   }
 
+  /* ---- Current stock (estimate) ---- */
+  // What should be on hand right now, whether or not today's Stock-In or
+  // Stock-Out was done: the last weigh-in, plus deliveries since, minus
+  // Square sales since (fetched in chunks of up to a day; the worker serves
+  // at most 36 hours per request).
+  var stockNow = { loading: false, data: null, error: "" };
+  function latestStockEvent(){
+    return state.events.find(function(e){ return e.type === "stock" && e.readings; }) || null;
+  }
+  function loadStockNow(){
+    if(stockNow.loading) return;
+    var base = latestStockEvent();
+    stockNow.loading = true; stockNow.error = ""; stockNow.data = null;
+    var done = function(sold, note){
+      stockNow.data = { baseId: base ? base.id : null, sold: sold, note: note || "", at: Date.now() };
+      stockNow.loading = false;
+      if(state.screen === "admin-stockcheck") render();
+    };
+    if(!base || !getSquareConfig()) return done(null, getSquareConfig() ? "" : "Square is not set up");
+    var from = base.createdAt, to = Date.now();
+    if(to - from > 7 * 86400000) return done(null, "The last weigh-in is more than a week old - do a Stock-In for a proper count");
+    var chunks = [];
+    for(var t = from; t < to; t += 86400000){ chunks.push([t, Math.min(t + 86400000, to)]); }
+    Promise.all(chunks.map(function(c){
+      return squareGet("/sales?from=" + encodeURIComponent(new Date(c[0]).toISOString()) + "&to=" + encodeURIComponent(new Date(c[1]).toISOString()));
+    })).then(function(results){
+      var sold = {};
+      results.forEach(function(res){
+        (res.items || []).forEach(function(it){
+          var f = matchFlavour(it);
+          if(f) sold[f.id] = (sold[f.id] || 0) + (it.grams || 0);
+        });
+      });
+      done(sold);
+    }).catch(function(err){
+      console.error("Current stock failed:", err);
+      stockNow.error = (err && err.message) || "Could not load Square sales";
+      done(null, "Square sales could not be loaded");
+    });
+  }
+
+  function renderCurrentStock(){
+    var base = latestStockEvent();
+    var data = stockNow.data;
+    var rows = state.flavours.map(function(f){
+      var reading = base && base.readings[f.id] != null ? base.readings[f.id] : null;
+      var since = base ? base.createdAt : 0;
+      if(reading == null){ reading = f.lastStockG || 0; since = toMillis(f.lastStockAt) || 0; }
+      var delivered = 0;
+      state.events.forEach(function(e){ if(e.type === "restock" && e.flavourId === f.id && e.createdAt > since) delivered += e.amountG || 0; });
+      var sold = data && data.sold ? Math.round(data.sold[f.id] || 0) : null;
+      var est = Math.round(reading + delivered - (sold || 0));
+      var low = est <= (f.thresholdG || 0);
+      var how = base && base.readings[f.id] != null ? (base.dir === "in" ? "Stock-In" : "Stock-Out") + ", " + fmtDateTime(base.createdAt) : (since ? "last known, " + fmtDateTime(since) : "last known");
+      var sub = "Weighed " + fmtG(reading) + " (" + escapeHtml(how) + ")" +
+        (delivered ? " + " + fmtG(delivered) + " delivered" : "") +
+        (sold != null ? " - " + fmtG(sold) + " sold in Square since" : (stockNow.loading ? " - loading Square sales..." : ""));
+      return '<div class="list-row">' +
+        '<div class="main"><div class="t">'+escapeHtml(f.name)+'</div><div class="s">'+sub+'</div></div>' +
+        '<div class="tabular" style="text-align:right;"><div style="font-weight:700;">'+(sold != null ? "~" : "")+fmtG(est)+'</div>'+(low ? '<span class="pill low">Low</span>' : '')+'</div>' +
+      '</div>';
+    }).join("") || '<div class="empty" style="padding:10px 0;">No flavours set up yet.</div>';
+    return '<div class="card">' +
+      '<div class="eyebrow">Current stock (estimate)</div>' +
+      '<p class="muted" style="font-size:12px;margin-top:4px;">Last weigh-in + deliveries - Square sales since. Not counting tasters or drying, so the real figure is a little lower.</p>' +
+      '<div style="padding-block:4px;">'+rows+'</div>' +
+      (data && data.note ? '<p class="s" style="color:var(--warn);margin-top:6px;">'+escapeHtml(data.note)+'</p>' : '') +
+      '<button class="btn btn-ghost" style="width:100%;margin-top:10px;" id="btn-refresh-stocknow">Refresh</button>' +
+    '</div>';
+  }
+
   function renderAdminStockCheck(){
     var cfg = getSquareConfig();
     var byDay = {}; var days = [];
@@ -2044,6 +2139,7 @@
     }).join("") || '<div class="card empty">No stock checks yet. One runs automatically at every Stock-Out once Square is set up.</div>';
     return backRow("Manage") +
     '<h1 style="font-size:20px;">Stock check</h1>' +
+    renderCurrentStock() +
     '<div class="card">' +
       '<p style="font-size:13.5px;">'+(cfg ? '<b style="color:var(--good);">Square is set up</b> - every Stock-Out is compared with that whole day\'s Square sales.' : '<b style="color:var(--warn);">Square is not set up yet</b> - Stock-Out works as normal without the check.')+'</p>' +
       '<p class="muted" style="font-size:12.5px;margin-top:8px;">Missing = opening + deliveries - sold in Square - closing. Drying is estimated from the overnight drop, so Stock-In must be a real weigh-in each morning. The rest is counted as tasters. A flavour is flagged when more than '+RECON_TOLERANCE_G+' g and '+RECON_TOLERANCE_PCT+'% of its sales goes missing beyond drying.</p>' +
@@ -2359,6 +2455,11 @@
 
     // Admin: re-run today's stock check against Square
     if(state.screen === "admin-stockcheck") setTimeout(fillStockCheckGaps, 0);
+    if(state.screen === "admin-stockcheck" && !stockNow.loading && !stockNow.data){
+      setTimeout(function(){ if(!stockNow.loading && !stockNow.data) loadStockNow(); }, 0);
+    }
+    var refreshNow = document.getElementById("btn-refresh-stocknow");
+    if(refreshNow) refreshNow.addEventListener("click", function(){ stockNow.loading = false; loadStockNow(); render(); });
     var rerun = document.getElementById("btn-run-stockcheck");
     if(rerun) rerun.addEventListener("click", function(){
       var day = document.getElementById("sc-day").value;
