@@ -58,6 +58,10 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
   IDs to email anyone else. Template content should be `<div style="white-space:pre-wrap">{{message}}</div>` (double braces = escaped)
   so line breaks show; never use triple braces. The EmailJS private key is never needed by the app.
 
+- Stock-In email: every saved Stock-In immediately emails the owner (sendEmailText + buildStockInEmailText): each flavour's
+  weight, change vs its last recorded level, LOW flags, total, and whether Time-In/Cash-In are done yet. Independent of cash.
+  The end-of-day report still goes at Cash-Out.
+
 ## Morning alert (worker cron)
 - The worker has a Cron Trigger `20 23 * * *` (UTC) = 9:20am Brisbane (UTC+10, no DST; SHOP_UTC_OFFSET_HOURS in worker.js).
   `scheduled()` reads today's events (createdAt >= Brisbane midnight) with the service account and, if no Stock-In or no Cash-In,
