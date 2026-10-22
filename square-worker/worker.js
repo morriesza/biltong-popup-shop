@@ -13,9 +13,12 @@
 //   ALERT_DAYS                (Text, optional) days to check, 1=Mon..7=Sun,
 //                             e.g. "1,2,3,4,5,6,7" (default: every day)
 //
-// Cron trigger (Settings -> Triggers): "20 23 * * *" = 9:20am Brisbane
-// (UTC+10, no daylight saving). At that time the worker checks today's
-// entries and emails the owner if Stock-In or Cash-In is missing.
+// Cron triggers (Settings -> Triggers):
+//   "20 23 * * *"  = 9:20am Brisbane (UTC+10, no daylight saving): emails the
+//                    owner if Stock-In or Cash-In is missing today.
+//   "*/15 * * * *" = every 15 minutes: emails any Stock-In / Stock-Out from
+//                    the last 24 hours that hasn't been emailed yet (safety
+//                    net for /notify-stock; `notified` collection dedupes).
 //
 // Endpoints:
 //   POST /login   { pin }  -> { ok, token, employee }
@@ -27,6 +30,9 @@
 //        add &detail=1 for `lines`: each weighed sale { at, name, variation, grams, cents }
 //        Grams sold (and sales cents) per Square item for a time window -
 //        no customer, card or payment details.
+//   POST /notify-stock { eventId }   (signed in) -> { ok, sent }
+//        Emails the owner about a Stock-In / Stock-Out right after it is
+//        saved. Each event is only ever emailed once.
 //   POST /opening-check   (boss) -> { ok, missing, sent }
 //        Runs the morning check now and always emails the result, marked
 //        TEST - for checking the setup.
@@ -86,6 +92,13 @@ export default {
       if (url.pathname === "/login" && request.method === "POST") {
         return reply(200, await login(request, env));
       }
+      if (url.pathname === "/notify-stock" && request.method === "POST") {
+        await verifyIdToken(request, env);
+        const body = await request.json().catch(() => ({}));
+        const id = String(body.eventId || "");
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new HttpError(400, "eventId required");
+        return reply(200, Object.assign({ ok: true }, await notifyStockEvent(env, id)));
+      }
       if (url.pathname === "/opening-check" && request.method === "POST") {
         const user = await verifyIdToken(request, env);
         if (user.boss !== true) throw new HttpError(403, "Boss only");
@@ -115,9 +128,128 @@ export default {
 
   // Cron trigger: the morning check.
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(openingCheck(env, false).catch((err) => console.error("Opening check failed:", err)));
+    if (event && event.cron === "20 23 * * *") {
+      ctx.waitUntil(openingCheck(env, false).catch((err) => console.error("Opening check failed:", err)));
+    } else {
+      ctx.waitUntil(sweepStockEmails(env).catch((err) => console.error("Stock email sweep failed:", err)));
+    }
   }
 };
+
+/* ============================== stock emails ============================== */
+
+// Firestore REST value -> plain JS value.
+function fsValue(v) {
+  if (!v) return null;
+  if ("stringValue" in v) return v.stringValue;
+  if ("integerValue" in v) return Number(v.integerValue);
+  if ("doubleValue" in v) return Number(v.doubleValue);
+  if ("booleanValue" in v) return v.booleanValue;
+  if ("timestampValue" in v) return Date.parse(v.timestampValue);
+  if ("nullValue" in v) return null;
+  if ("mapValue" in v) return fsFields(v.mapValue.fields || {});
+  if ("arrayValue" in v) return (v.arrayValue.values || []).map(fsValue);
+  return null;
+}
+function fsFields(fields) {
+  const out = {};
+  Object.keys(fields || {}).forEach((k) => { out[k] = fsValue(fields[k]); });
+  return out;
+}
+function fsDoc(doc) {
+  return Object.assign({ id: doc.name.split("/").pop() }, fsFields(doc.fields));
+}
+function grams(n) { return n == null ? "-" : Math.round(n) + " g"; }
+function weight(n) { return Math.abs(n) >= 1000 ? (Math.round(n / 10) / 100) + " kg" : Math.round(n) + " g"; }
+
+async function eventsBetween(env, fromMs, toMs) {
+  const rows = await firestore(env, "POST", ":runQuery", {
+    structuredQuery: {
+      from: [{ collectionId: "events" }],
+      where: { compositeFilter: { op: "AND", filters: [
+        { fieldFilter: { field: { fieldPath: "createdAt" }, op: "GREATER_THAN_OR_EQUAL", value: { timestampValue: new Date(fromMs).toISOString() } } },
+        { fieldFilter: { field: { fieldPath: "createdAt" }, op: "LESS_THAN", value: { timestampValue: new Date(toMs).toISOString() } } }
+      ] } },
+      orderBy: [{ field: { fieldPath: "createdAt" }, direction: "ASCENDING" }],
+      limit: 500
+    }
+  });
+  return (rows || []).filter((r) => r.document).map((r) => fsDoc(r.document));
+}
+
+async function buildStockEmail(env, evt) {
+  const flavDocs = await firestore(env, "GET", "/flavours?pageSize=300");
+  const flavours = ((flavDocs && flavDocs.documents) || []).map(fsDoc);
+  const name = (id) => { const f = flavours.find((x) => x.id === id); return f ? f.name : "(removed flavour)"; };
+  const threshold = (id) => { const f = flavours.find((x) => x.id === id); return f ? (f.thresholdG || 0) : 0; };
+  const t = shopDate(evt.createdAt);
+  const dayStart = Date.UTC(t.y, t.m, t.d) - SHOP_UTC_OFFSET_HOURS * 3600000;
+  const dayLabel = t.y + "-" + String(t.m + 1).padStart(2, "0") + "-" + String(t.d).padStart(2, "0");
+  const recent = await eventsBetween(env, evt.createdAt - 4 * 86400000, evt.createdAt);
+  const prev = recent.filter((e) => e.type === "stock" && e.readings).pop() || null;
+  const today = recent.filter((e) => e.createdAt >= dayStart);
+  const stockIn = today.filter((e) => e.type === "stock" && e.dir === "in" && e.readings).pop() || null;
+  const isIn = evt.dir === "in";
+  const readings = evt.readings || {};
+  const ids = flavours.map((f) => f.id).filter((id) => readings[id] != null)
+    .concat(Object.keys(readings).filter((id) => !flavours.some((f) => f.id === id)));
+  const lines = [(isIn ? "Stock-In" : "Stock-Out") + " by " + (evt.employeeName || "?") + " at " + shopTime(evt.createdAt) + " on " + dayLabel + ":", ""];
+  const low = [];
+  let total = 0;
+  ids.forEach((id) => {
+    const g = readings[id];
+    total += g || 0;
+    if (g <= threshold(id)) low.push(name(id));
+    let extra = "";
+    if (!isIn && stockIn && stockIn.readings && stockIn.readings[id] != null) {
+      const delivered = today.filter((e) => e.type === "restock" && e.flavourId === id && e.createdAt > stockIn.createdAt).reduce((s, e) => s + (e.amountG || 0), 0);
+      extra = " (Stock-In " + grams(stockIn.readings[id]) + (delivered ? " + " + grams(delivered) + " delivered" : "") + ", used " + grams(stockIn.readings[id] + delivered - g) + ")";
+    } else if (prev && prev.readings && prev.readings[id] != null) {
+      const ch = Math.round(g - prev.readings[id]);
+      extra = " (last " + (prev.dir === "in" ? "Stock-In" : "Stock-Out") + " " + grams(prev.readings[id]) + ", " + (ch > 0 ? "+" : "") + ch + " g)";
+    }
+    lines.push("- " + name(id) + ": " + grams(g) + extra + (g <= threshold(id) ? " LOW" : ""));
+  });
+  lines.push("", "Total: " + weight(total));
+  if (low.length) lines.push("Low stock: " + low.join(", "));
+  if (!isIn && !stockIn) lines.push("No Stock-In was recorded today to compare with.");
+  if (isIn) {
+    const done = (type) => today.some((e) => e.type === type && e.dir === "in");
+    lines.push("", "Also today so far: Time-In " + (done("time") ? "done" : "NOT done") + ", Cash-In " + (done("cash") ? "done" : "NOT done") + ".");
+  }
+  const subject = "Biltong Floor Log - " + (isIn ? "Stock-In" : "Stock-Out") + " - " + dayLabel + " (" + (evt.employeeName || "?") + ")";
+  return { subject, message: lines.join("\n") };
+}
+
+// Emails one stock event, once. Returns { sent, already }.
+async function notifyStockEvent(env, id, evtIn) {
+  const done = await firestore(env, "GET", "/notified/" + id);
+  if (done && done.fields) return { sent: false, already: true };
+  let evt = evtIn;
+  if (!evt) {
+    const doc = await firestore(env, "GET", "/events/" + id);
+    if (!doc) throw new HttpError(404, "Event not found");
+    evt = fsDoc(doc);
+  }
+  if (evt.type !== "stock" || !evt.readings) throw new HttpError(400, "Not a stock event");
+  const mail = await buildStockEmail(env, evt);
+  await sendEmail(env, mail.subject, mail.message);
+  await firestore(env, "PATCH", "/notified/" + id, { fields: { at: { integerValue: String(Date.now()) } } });
+  return { sent: true };
+}
+
+// Safety net: email any Stock-In/Out from the last 24 hours not yet emailed.
+async function sweepStockEmails(env) {
+  const now = Date.now();
+  const evs = await eventsBetween(env, now - 86400000, now + 60000);
+  let sent = 0;
+  for (const e of evs) {
+    if (e.type !== "stock" || !e.readings) continue;
+    const res = await notifyStockEvent(env, e.id, e);
+    if (res.sent) sent++;
+  }
+  return { sent };
+}
 
 /* ============================== morning alert ============================== */
 
