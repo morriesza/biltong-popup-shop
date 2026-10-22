@@ -373,7 +373,7 @@
 
   // Bump on every change that ships. The app compares it with the live page
   // to offer a one-tap update (see checkForUpdate) and shows it under Manage.
-  var APP_VERSION = "2026-10-17.3";
+  var APP_VERSION = "2026-10-22.1";
 
   var PIN_LENGTH = 6;
   var PIN_PATTERN = /^[0-9ABC]{6}$/;
@@ -752,11 +752,39 @@
     });
   }
 
-  // Emailed as soon as a Stock-In is saved, whether or not the cash has been
-  // done. `before` holds each flavour's last recorded level before this
-  // Stock-In, to show the change (overnight drying, or a weighing slip).
+  // Every Stock-In and Stock-Out emails the owner. The worker sends it
+  // (/notify-stock; it also re-checks every 15 minutes for any weigh-in not
+  // yet emailed, so one is never missed and never sent twice). If the worker
+  // doesn't confirm (older worker, email key not set, or unreachable), this device
+  // sends it instead - a rare duplicate beats a missed email.
+  function notifyStockSaved(evt, before){
+    var fallback = function(){
+      var label = evt.dir === "in" ? "Stock-In" : "Stock-Out";
+      return sendEmailText("Biltong Floor Log - " + label + " - " + todayKey() + " (" + state.employee.name + ")", buildStockInEmailText(evt, before));
+    };
+    if(!DB.isCloud() || !evt.id) return fallback();
+    return DB.getIdToken().then(function(token){
+      return fetch(EMBEDDED_WORKER_URL.replace(/\/+$/, "") + "/notify-stock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        body: JSON.stringify({ eventId: evt.id })
+      });
+    }).then(function(res){
+      return res.json().catch(function(){ return {}; }).then(function(json){
+        if(res.ok && json.ok) return;
+        console.warn("Worker could not email the weigh-in:", res.status, json.error);
+        return fallback();
+      });
+    }).catch(function(err){
+      console.warn("Worker unreachable for the weigh-in email; sending from this device.", err);
+      return fallback();
+    });
+  }
+
+  // Fallback email text for a Stock-In or Stock-Out sent from this device.
+  // `before` holds each flavour's last recorded level before this weigh-in.
   function buildStockInEmailText(evt, before){
-    var lines = ["Stock-In by " + evt.employeeName + " at " + fmtTime(evt.createdAt) + " on " + todayKey(new Date(evt.createdAt)) + ":", ""];
+    var lines = [(evt.dir === "in" ? "Stock-In" : "Stock-Out") + " by " + evt.employeeName + " at " + fmtTime(evt.createdAt) + " on " + todayKey(new Date(evt.createdAt)) + ":", ""];
     var low = [];
     state.flavours.forEach(function(f){
       var g = evt.readings[f.id];
@@ -773,7 +801,7 @@
     if(low.length) lines.push("Low stock: " + low.join(", "));
     var day = todayKey(new Date(evt.createdAt));
     var done = function(type){ return state.events.some(function(e){ return e.type === type && e.dir === "in" && todayKey(new Date(eventTime(e))) === day; }); };
-    lines.push("", "Also today so far: Time-In " + (done("time") ? "done" : "NOT done") + ", Cash-In " + (done("cash") ? "done" : "NOT done") + ".");
+    if(evt.dir === "in") lines.push("", "Also today so far: Time-In " + (done("time") ? "done" : "NOT done") + ", Cash-In " + (done("cash") ? "done" : "NOT done") + ".");
     return lines.join("\n");
   }
 
@@ -2595,9 +2623,7 @@
         else{ toast("Stock-"+dir+" saved"); }
         return refreshAll();
       }).then(function(){
-        if(dir === "in" && savedEvt){
-          sendEmailText("Biltong Floor Log - Stock-In - " + todayKey() + " (" + state.employee.name + ")", buildStockInEmailText(savedEvt, before));
-        }
+        if(savedEvt) notifyStockSaved(savedEvt, before);
         if(dir !== "out" || !getSquareConfig()) return go("home");
         toast("Checking against Square sales...");
         return runStockCheck(savedEvt).then(function(check){ go(check ? "stockcheck" : "home"); });

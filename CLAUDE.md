@@ -40,7 +40,7 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
   Firestore rules enforce `allow update, delete: if false` on `events`. Corrections are new entries.
 
 ## Data (Firebase Firestore, project biltong-popup-toowong)
-- Collections: `employees`, `flavours`, `events`, `loginGuard` (worker only; closed to the app).
+- Collections: `employees`, `flavours`, `events`, `loginGuard` and `notified` (both worker only; closed to the app).
 - Event types: `time` (dir; boss-added ones also atMs, manual, enteredById, enteredByName, note), `cash` (amount + breakdown), `stock` (readings map, flagged list), `restock` (flavourId, flavourName, amountG, note),
   `sales` (Square stock check: day, orders, rows, unmatched, unweighed, flagged), `cashpickup` (amount, breakdown, note).
 - The Firebase web config is embedded in `index.html` (EMBEDDED_FIREBASE_CONFIG) on purpose: it is not a secret, staff must never have
@@ -61,9 +61,12 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
   IDs to email anyone else. Template content should be `<div style="white-space:pre-wrap">{{message}}</div>` (double braces = escaped)
   so line breaks show; never use triple braces. The EmailJS private key is never needed by the app.
 
-- Stock-In email: every saved Stock-In immediately emails the owner (sendEmailText + buildStockInEmailText): each flavour's
-  weight, change vs its last recorded level, LOW flags, total, and whether Time-In/Cash-In are done yet. Independent of cash.
-  The end-of-day report still goes at Cash-Out.
+- OWNER: always get an email for every Stock-In AND Stock-Out. After saving, the app calls the worker POST /notify-stock
+  {eventId} (signed in); the worker builds and sends the email server-side (Stock-In: weights vs last weigh-in + whether
+  Time-In/Cash-In are done; Stock-Out: weights vs that day's Stock-In + deliveries = used) and records `notified/{eventId}` so
+  it's sent once. A worker cron `*/15 * * * *` (sweepStockEmails) emails any stock event from the last 24 h not yet notified.
+  If the worker doesn't confirm (old worker, no EMAILJS_PRIVATE_KEY, unreachable), the device sends its own email
+  (notifyStockSaved -> buildStockInEmailText) - a rare duplicate beats a missed email. The end-of-day report still goes at Cash-Out.
 
 ## Morning alert (worker cron)
 - The worker has a Cron Trigger `20 23 * * *` (UTC) = 9:20am Brisbane (UTC+10, no DST; SHOP_UTC_OFFSET_HOURS in worker.js).
@@ -131,7 +134,8 @@ Internal staff app for a biltong pop-up shop. Owner: Morne Roets. Hosted free on
 ## Open items / ideas
 - Confirm the first real end-of-day email arrives and looks right.
 - Cash till check (cashCents) and the per-sale list (detail=1) need the worker redeployed (same redeploy as the morning alert).
-- Morning alert: owner to redeploy worker, add EMAILJS_PRIVATE_KEY, tick EmailJS non-browser API, add the cron trigger, then test.
+- Morning alert + stock emails: owner to redeploy worker, add EMAILJS_PRIVATE_KEY, tick EmailJS non-browser API, add cron
+  triggers `20 23 * * *` and `*/15 * * * *`, then test. scheduled() routes on event.cron (exactly "20 23 * * *" = morning alert).
 - PIN login via the worker is live (Firebase Authentication on, FIREBASE_SERVICE_ACCOUNT set, firestore.rules published).
   PINs were publicly readable before this; owner advised to change all PINs (boss first).
 - Owner was walked through restricting the Firebase API key in Google Cloud Console (HTTP referrer = the GitHub Pages site, API = Firestore only);
